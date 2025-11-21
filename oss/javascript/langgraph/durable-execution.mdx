@@ -1,0 +1,211 @@
+---
+title: 持久执行
+---
+
+
+
+**持久执行**是一种技术，其中进程或工作流在关键点保存其进度，允许它暂停并在稍后从停止的地方准确恢复。这在需要[人在回路](/oss/javascript/langgraph/interrupts)的场景中特别有用，用户可以在继续之前检查、验证或修改过程，以及在可能遇到中断或错误（例如，对 LLM 的调用超时）的长时间运行任务中。通过保留已完成的工作，持久执行使进程能够在不重新处理先前步骤的情况下恢复——即使在显著延迟之后（例如，一周后）。
+
+LangGraph 的内置[持久化](/oss/javascript/langgraph/persistence)层为工作流提供持久执行，确保每个执行步骤的状态都保存到持久存储中。此功能保证如果工作流被中断——无论是由于系统故障还是[人在回路](/oss/javascript/langgraph/interrupts)交互——它都可以从其最后记录的状态恢复。
+
+<Tip>
+如果您使用带有检查点保存器的 LangGraph，您已经启用了持久执行。您可以在任何点暂停和恢复工作流，即使在中断或故障之后也是如此。
+要充分利用持久执行，请确保您的工作流设计为[确定性](#determinism-and-consistent-replay)和[幂等](#determinism-and-consistent-replay)，并将任何副作用或非确定性操作包装在[任务](/oss/javascript/langgraph/functional-api#task)中。您可以从 [StateGraph (Graph API)](/oss/javascript/langgraph/graph-api) 和 [Functional API](/oss/javascript/langgraph/functional-api) 使用[任务](/oss/javascript/langgraph/functional-api#task)。
+</Tip>
+
+## 要求
+
+要在 LangGraph 中利用持久执行，您需要：
+
+1. 通过指定将保存工作流进度的[检查点保存器](/oss/javascript/langgraph/persistence#checkpointer-libraries)来在工作流中启用[持久化](/oss/javascript/langgraph/persistence)。
+2. 在执行工作流时指定[线程标识符](/oss/javascript/langgraph/persistence#threads)。这将跟踪工作流的特定实例的执行历史。
+
+
+
+1. 将任何非确定性操作（例如，随机数生成）或具有副作用的操作（例如，文件写入、API 调用）包装在 [tasks](https://langchain-ai.github.io/langgraphjs/reference/functions/langgraph.task.html) 中，以确保当工作流恢复时，这些操作不会针对特定运行重复，而是从持久化层检索其结果。有关更多信息，请参阅[确定性和一致重放](#determinism-and-consistent-replay)。
+
+
+## 确定性和一致重放
+
+当您恢复工作流运行时，代码**不会**从执行停止的**同一行代码**恢复；相反，它将识别一个适当的[起始点](#starting-points-for-resuming-workflows)，从中继续执行。这意味着工作流将从[起始点](#starting-points-for-resuming-workflows)重放所有步骤，直到到达停止的点。
+
+因此，当您为持久执行编写工作流时，必须将任何非确定性操作（例如，随机数生成）和任何具有副作用的操作（例如，文件写入、API 调用）包装在[任务](/oss/javascript/langgraph/functional-api#task)或[节点](/oss/javascript/langgraph/graph-api#nodes)中。
+
+为了确保您的工作流是确定性的并且可以一致地重放，请遵循以下准则：
+
+* **避免重复工作**：如果[节点](/oss/javascript/langgraph/graph-api#nodes)包含多个具有副作用的操作（例如，日志记录、文件写入或网络调用），请将每个操作包装在单独的**任务**中。这确保当工作流恢复时，操作不会重复，并且它们的结果从持久化层检索。
+* **封装非确定性操作**：将可能产生非确定性结果的任何代码（例如，随机数生成）包装在**任务**或**节点**中。这确保在恢复时，工作流遵循具有相同结果的精确记录步骤序列。
+* **使用幂等操作**：在可能的情况下，确保副作用（例如，API 调用、文件写入）是幂等的。这意味着如果操作在工作流失败后重试，它将具有与第一次执行时相同的效果。这对于导致数据写入的操作尤其重要。如果**任务**开始但未能成功完成，工作流的恢复将重新运行**任务**，依靠记录的结果来保持一致性。使用幂等键或验证现有结果以避免意外重复，确保工作流执行的流畅和可预测。
+
+
+
+For some examples of pitfalls to avoid, see the [Common Pitfalls](/oss/javascript/langgraph/functional-api#common-pitfalls) section in the functional API, which shows
+how to structure your code using **tasks** to avoid these issues. The same principles apply to the [StateGraph (Graph API)](https://langchain-ai.github.io/langgraphjs/reference/classes/langgraph.StateGraph.html).
+
+
+## 持久性模式
+
+LangGraph 支持三种持久性模式，允许您根据应用程序的需求平衡性能和数据一致性。持久性模式，从最不持久到最持久，如下所示：
+
+* [`"exit"`](#exit)
+* [`"async"`](#async)
+* [`"sync"`](#sync)
+
+更高的持久性模式会增加工作流执行的开销。
+
+<Tip>
+**在 v0.6.0 中添加**
+使用 `durability` 参数而不是 `checkpoint_during`（在 v0.6.0 中已弃用）进行持久化策略管理：
+
+* `durability="async"` 替换 `checkpoint_during=True`
+* `durability="exit"` 替换 `checkpoint_during=False`
+
+用于持久化策略管理，具有以下映射：
+
+* `checkpoint_during=True` -> `durability="async"`
+* `checkpoint_during=False` -> `durability="exit"`
+</Tip>
+
+### `"exit"`
+
+仅在图执行完成时（成功或出现错误）持久化更改。这为长时间运行的图提供了最佳性能，但意味着中间状态未保存，因此您无法从执行中故障恢复或中断图执行。
+
+### `"async"`
+
+在下一步执行时异步持久化更改。这提供了良好的性能和持久性，但如果进程在执行期间崩溃，检查点可能不会被写入的风险很小。
+
+### `"sync"`
+
+在下一步开始之前同步持久化更改。这确保在继续执行之前写入每个检查点，以一些性能开销为代价提供高持久性。
+
+您可以在调用任何图执行方法时指定持久性模式：
+
+
+
+## 在节点中使用任务
+
+如果[节点](/oss/javascript/langgraph/graph-api#nodes)包含多个操作，您可能会发现将每个操作转换为**任务**比将操作重构为单个节点更容易。
+
+
+
+<Tabs>
+    <Tab title="Original">
+    ```typescript
+    import { StateGraph, START, END } from "@langchain/langgraph";
+    import { MemorySaver } from "@langchain/langgraph";
+    import { v4 as uuidv4 } from "uuid";
+    import * as z from "zod";
+
+    // Define a Zod schema to represent the state
+    const State = z.object({
+      url: z.string(),
+      result: z.string().optional(),
+    });
+
+    const callApi = async (state: z.infer<typeof State>) => {
+      const response = await fetch(state.url);  // [!code highlight]
+      const text = await response.text();
+      const result = text.slice(0, 100); // Side-effect
+      return {
+        result,
+      };
+    };
+
+    // Create a StateGraph builder and add a node for the callApi function
+    const builder = new StateGraph(State)
+      .addNode("callApi", callApi)
+      .addEdge(START, "callApi")
+      .addEdge("callApi", END);
+
+    // Specify a checkpointer
+    const checkpointer = new MemorySaver();
+
+    // Compile the graph with the checkpointer
+    const graph = builder.compile({ checkpointer });
+
+    // Define a config with a thread ID.
+    const threadId = uuidv4();
+    const config = { configurable: { thread_id: threadId } };
+
+    // Invoke the graph
+    await graph.invoke({ url: "https://www.example.com" }, config);
+```
+    </Tab>
+    <Tab title="With task">
+    ```typescript
+    import { StateGraph, START, END } from "@langchain/langgraph";
+    import { MemorySaver } from "@langchain/langgraph";
+    import { task } from "@langchain/langgraph";
+    import { v4 as uuidv4 } from "uuid";
+    import * as z from "zod";
+
+    // Define a Zod schema to represent the state
+    const State = z.object({
+      urls: z.array(z.string()),
+      results: z.array(z.string()).optional(),
+    });
+
+    const makeRequest = task("makeRequest", async (url: string) => {
+      const response = await fetch(url);  // [!code highlight]
+      const text = await response.text();
+      return text.slice(0, 100);
+    });
+
+    const callApi = async (state: z.infer<typeof State>) => {
+      const requests = state.urls.map((url) => makeRequest(url));  // [!code highlight]
+      const results = await Promise.all(requests);
+      return {
+        results,
+      };
+    };
+
+    // Create a StateGraph builder and add a node for the callApi function
+    const builder = new StateGraph(State)
+      .addNode("callApi", callApi)
+      .addEdge(START, "callApi")
+      .addEdge("callApi", END);
+
+    // Specify a checkpointer
+    const checkpointer = new MemorySaver();
+
+    // Compile the graph with the checkpointer
+    const graph = builder.compile({ checkpointer });
+
+    // Define a config with a thread ID.
+    const threadId = uuidv4();
+    const config = { configurable: { thread_id: threadId } };
+
+    // Invoke the graph
+    await graph.invoke({ urls: ["https://www.example.com"] }, config);
+```
+    </Tab>
+</Tabs>
+
+
+## 恢复工作流
+
+一旦您在工作流中启用了持久执行，您可以在以下场景中恢复执行：
+
+
+
+* **暂停和恢复工作流**：使用 [interrupt](https://langchain-ai.github.io/langgraphjs/reference/functions/langgraph.interrupt-2.html) 函数在特定点暂停工作流，并使用 [`Command`](https://langchain-ai.github.io/langgraphjs/reference/classes/langgraph.Command.html) 原语以更新的状态恢复它。有关更多详细信息，请参阅[**中断**](/oss/javascript/langgraph/interrupts)。
+* **从故障中恢复**：在异常（例如，LLM 提供商中断）后从最后一个成功的检查点自动恢复工作流。这涉及通过提供 `null` 作为输入值，使用相同的线程标识符执行工作流（请参阅使用功能 API 的此[示例](/oss/javascript/langgraph/use-functional-api#resuming-after-an-error)）。
+
+
+## 恢复工作流的起始点
+
+
+
+* 如果您使用 [StateGraph (Graph API)](/oss/javascript/langgraph/graph-api)，起始点是执行停止的[**节点**](/oss/javascript/langgraph/graph-api#nodes)的开始。
+* 如果您在节点内进行子图调用，起始点将是调用被停止的子图的**父**节点。
+  在子图内，起始点将是执行停止的特定[**节点**](/oss/javascript/langgraph/graph-api#nodes)。
+* 如果您使用 Functional API，起始点是执行停止的[**入口点**](/oss/javascript/langgraph/functional-api#entrypoint)的开始。
+
+---
+
+<Callout icon="pen-to-square" iconType="regular">
+    [Edit the source of this page on GitHub.](https://github.com/langchain-ai/docs/edit/main/src/oss\langgraph\durable-execution.mdx)
+</Callout>
+<Tip icon="terminal" iconType="regular">
+    [Connect these docs programmatically](/use-these-docs) to Claude, VSCode, and more via MCP for real-time answers.
+</Tip>

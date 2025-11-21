@@ -1,0 +1,151 @@
+---
+title:
+sidebarTitle: Home
+mode: "custom"
+---
+
+<div class="mx-auto max-w-8xl px-0 lg:px-5" style={{ paddingBottom: "8rem" }}>
+    <div class="mdx-content prose prose-gray dark:prose-invert mx-4 pt-10">
+        <h1 class="flex whitespace-pre-wrap group font-semibold text-2xl sm:text-3xl mt-8">文档</h1>
+
+        LangChain 是代理工程的平台。Replit、Clay、Rippling、Cloudflare、Workday 等公司的 AI 团队都信任 LangChain 的产品来构建可靠的代理。
+
+        <h2 class="flex whitespace-pre-wrap group font-semibold">开源代理框架</h2>
+
+        <Tabs>
+            <Tab title="Python" icon="python">
+                <CardGroup cols={3}>
+                    <Card
+                        title="LangChain (Python)"
+                        href="/oss/python/langchain/overview"
+                        icon="link"
+                        cta="Learn more"
+                    >
+                        快速开始构建代理，可自由选择任何模型提供商
+                    </Card>
+                    <Card
+                        title="LangGraph (Python)"
+                        href="/oss/python/langgraph/overview"
+                        icon="circle-nodes"
+                        cta="Learn more"
+                    >
+                        通过低级编排、记忆和人类介入支持，控制自定义代理的每一步。
+                    </Card>
+                    <Card
+                        title="Deep Agents (Python)"
+                        href="/oss/python/deepagents/overview"
+                        icon="robot"
+                        cta="Learn more"
+                    >
+                        构建能够处理复杂、多步骤任务的代理。
+                    </Card>
+                </CardGroup>
+            </Tab>
+            <Tab title="TypeScript" icon="js">
+                <CardGroup cols={3}>
+                    <Card
+                        title="LangChain (TypeScript)"
+                        href="/oss/javascript/langchain/overview"
+                        icon="link"
+                        cta="Learn more"
+                    >
+                        快速开始构建代理，可自由选择任何模型提供商。
+                    </Card>
+                    <Card
+                        title="LangGraph (TypeScript)"
+                        href="/oss/javascript/langgraph/overview"
+                        icon="circle-nodes"
+                        cta="Learn more"
+                    >
+                        过低级编排、记忆和人在回路中的支持，控制您自定义代理的每一步。
+                    </Card>
+                    <Card
+                        title="Deep Agents (TypeScript)"
+                        href="/oss/javascript/deepagents/overview"
+                        icon="robot"
+                        cta="Learn more"
+                    >
+                        构建能够处理复杂、多步骤任务的代理。
+                    </Card>
+                </CardGroup>
+            </Tab>
+        </Tabs>
+
+        <h2 class="flex whitespace-pre-wrap group font-semibold">LangSmith</h2>
+
+        [**LangSmith**](/langsmith/home) 是一个帮助AI团队使用实时生产数据进行持续测试和改进的平台。LangSmith 提供:
+
+        <CardGroup cols={4}>
+            <Card
+                title="Observability"
+                href="/langsmith/observability"
+                icon="magnifying-glass"
+                cta="Learn more"
+            >
+
+通过详细的跟踪和聚合趋势指标，准确了解你的代理是如何思考和行动的。
+
+</Card>
+<Card
+                title="Evaluation"
+                href="/langsmith/evaluation"
+                icon="chart-simple"
+                cta="Learn more"
+            >
+
+在生产数据或离线数据集上测试和评估智能体行为，以持续提升性能。
+
+</Card>
+<Card
+                title="Prompt Engineering"
+                href="/langsmith/prompt-engineering"
+                icon="terminal"
+                cta="Learn more"
+            >
+
+使用版本控制、提示优化和协作功能对提示进行迭代。
+
+</Card>
+<Card
+                title="Deployment"
+                href="/langsmith/deployments"
+                icon="rocket-launch"
+                cta="Learn more"
+            >
+
+一键部署你的代理，使用专为长时间任务构建的可扩展基础设施。
+
+</Card>
+</CardGroup>
+
+        <Callout icon="lock" color="#DFC5FE" iconType="regular">
+            LangSmith 符合 HIPAA、SOC 2 Type 2 和 GDPR 的数据安全和隐私最高标准。欲了解更多信息，请参阅 [Trust Center](https://trust.langchain.com/).
+        </Callout>
+
+        <h2 class="flex whitespace-pre-wrap group font-semibold">开始使用</h2>
+
+        <CardGroup cols={4}>
+            <Card title="使用 LangChain 构建你的第一个代理" icon="gear" href="/oss/python/langchain/quickstart" cta="开始" />
+            <Card title="注册 LangSmith" icon="screwdriver-wrench" href="https://smith.langchain.com/" cta="尝试 LangSmith" />
+            <Card title="使用LangGraph构建高级代理" icon="robot" href="/oss/python/langgraph/quickstart" cta="开始"/>
+            <Card title="注册LangChain学院" icon="graduation-cap" href="https://academy.langchain.com/" cta="开始"/>
+        </CardGroup>
+
+    </div>
+
+</div>
+
+{/* Hack to hide the callout cards */}
+
+<div className="relative">
+    <div className="absolute top-0 left-0 w-screen h-48 bg-background-light dark:bg-background-dark z-10"></div>
+</div>
+
+---
+
+<Callout icon="pen-to-square" iconType="regular">
+    [Edit the source of this page on GitHub.](https://github.com/langchain-ai/docs/edit/main/src/index.mdx)
+</Callout>
+<Tip icon="terminal" iconType="regular">
+    [Connect these docs programmatically](/use-these-docs) to Claude, VSCode, and more via MCP for real-time answers.
+</Tip>

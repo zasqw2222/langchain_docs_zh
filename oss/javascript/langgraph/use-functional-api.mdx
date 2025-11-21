@@ -1,0 +1,968 @@
+---
+title: 使用函数式 API
+sidebarTitle: 使用函数式 API
+---
+
+
+
+[**函数式 API**](/oss/javascript/langgraph/functional-api) 允许您以最小的代码更改将 LangGraph 的关键功能——[持久化](/oss/javascript/langgraph/persistence)、[内存](/oss/javascript/langgraph/add-memory)、[人在回路](/oss/javascript/langgraph/interrupts)和[流式传输](/oss/javascript/langgraph/streaming)——添加到您的应用程序中。
+
+<Tip>
+有关函数式 API 的概念信息，请参阅[函数式 API](/oss/javascript/langgraph/functional-api)。
+</Tip>
+
+## 创建简单工作流
+
+定义 `entrypoint` 时，输入仅限于函数的第一个参数。要传递多个输入，您可以使用字典。
+
+
+
+```typescript
+const checkpointer = new MemorySaver();
+
+const myWorkflow = entrypoint(
+  { checkpointer, name: "myWorkflow" },
+  async (inputs: { value: number; anotherValue: number }) => {
+    const value = inputs.value;
+    const anotherValue = inputs.anotherValue;
+    // ...
+  }
+);
+
+await myWorkflow.invoke({ value: 1, anotherValue: 2 });
+```
+
+
+<Accordion title="扩展示例：简单工作流">
+
+
+  ```typescript
+  import { v4 as uuidv4 } from "uuid";
+  import { entrypoint, task, MemorySaver } from "@langchain/langgraph";
+
+  // 检查数字是否为偶数的任务
+  const isEven = task("isEven", async (number: number) => {
+    return number % 2 === 0;
+  });
+
+  // 格式化消息的任务
+  const formatMessage = task("formatMessage", async (isEven: boolean) => {
+    return isEven ? "The number is even." : "The number is odd.";
+  });
+
+  // 创建用于持久化的 checkpointer
+  const checkpointer = new MemorySaver();
+
+  const workflow = entrypoint(
+    { checkpointer, name: "workflow" },
+    async (inputs: { number: number }) => {
+      // 简单的工作流，用于对数字进行分类
+      const even = await isEven(inputs.number);
+      return await formatMessage(even);
+    }
+  );
+
+  // 使用唯一的线程 ID 运行工作流
+  const config = { configurable: { thread_id: uuidv4() } };
+  const result = await workflow.invoke({ number: 7 }, config);
+  console.log(result);
+  ```
+
+</Accordion>
+
+<Accordion title="扩展示例：使用 LLM 撰写文章">
+  此示例演示如何在语法上使用 `@task` 和 `@entrypoint` 装饰器。如果提供了 checkpointer，工作流结果将持久化到 checkpointer 中。
+
+
+
+  ```typescript
+  import { v4 as uuidv4 } from "uuid";
+  import { ChatOpenAI } from "@langchain/openai";
+  import { entrypoint, task, MemorySaver } from "@langchain/langgraph";
+
+  const model = new ChatOpenAI({ model: "gpt-3.5-turbo" });
+
+  // 任务：使用 LLM 生成文章
+  const composeEssay = task("composeEssay", async (topic: string) => {
+    // 生成关于给定主题的文章
+    const response = await model.invoke([
+      { role: "system", content: "You are a helpful assistant that writes essays." },
+      { role: "user", content: `Write an essay about ${topic}.` }
+    ]);
+    return response.content as string;
+  });
+
+  // 创建用于持久化的 checkpointer
+  const checkpointer = new MemorySaver();
+
+  const workflow = entrypoint(
+    { checkpointer, name: "workflow" },
+    async (topic: string) => {
+      // 使用 LLM 生成文章的简单工作流
+      return await composeEssay(topic);
+    }
+  );
+
+  // 执行工作流
+  const config = { configurable: { thread_id: uuidv4() } };
+  const result = await workflow.invoke("the history of flight", config);
+  console.log(result);
+  ```
+
+</Accordion>
+
+## 并行执行
+
+可以通过并发调用任务并等待结果来并行执行任务。这对于提高 IO 密集型任务的性能很有用（例如，调用 LLM 的 API）。
+
+
+
+```typescript
+const addOne = task("addOne", async (number: number) => {
+  return number + 1;
+});
+
+const graph = entrypoint(
+  { checkpointer, name: "graph" },
+  async (numbers: number[]) => {
+    return await Promise.all(numbers.map(addOne));
+  }
+);
+```
+
+
+<Accordion title="扩展示例：并行 LLM 调用">
+  此示例演示如何使用 `@task` 并行运行多个 LLM 调用。每个调用生成关于不同主题的段落，结果合并为单个文本输出。
+
+
+
+  ```typescript
+  import { v4 as uuidv4 } from "uuid";
+  import { ChatOpenAI } from "@langchain/openai";
+  import { entrypoint, task, MemorySaver } from "@langchain/langgraph";
+
+  // 初始化 LLM 模型
+  const model = new ChatOpenAI({ model: "gpt-3.5-turbo" });
+
+  // 生成关于给定主题的段落的任务
+  const generateParagraph = task("generateParagraph", async (topic: string) => {
+    const response = await model.invoke([
+      { role: "system", content: "You are a helpful assistant that writes educational paragraphs." },
+      { role: "user", content: `Write a paragraph about ${topic}.` }
+    ]);
+    return response.content as string;
+  });
+
+  // 创建用于持久化的 checkpointer
+  const checkpointer = new MemorySaver();
+
+  const workflow = entrypoint(
+    { checkpointer, name: "workflow" },
+    async (topics: string[]) => {
+      // 并行生成多个段落并将它们组合在一起
+      const paragraphs = await Promise.all(topics.map(generateParagraph));
+      return paragraphs.join("\n\n");
+    }
+  );
+
+  // 运行工作流
+  const config = { configurable: { thread_id: uuidv4() } };
+  const result = await workflow.invoke(["quantum computing", "climate change", "history of aviation"], config);
+  console.log(result);
+  ```
+
+
+  此示例使用 LangGraph 的并发模型来提高执行时间，特别是在任务涉及 I/O（如 LLM 完成）时。
+</Accordion>
+
+## 调用图
+
+**函数式 API** 和 [**Graph API**](/oss/javascript/langgraph/graph-api) 可以在同一应用程序中一起使用，因为它们共享相同的底层运行时。
+
+
+
+```typescript
+import { entrypoint } from "@langchain/langgraph";
+import { StateGraph } from "@langchain/langgraph";
+
+const builder = new StateGraph(/* ... */);
+// ...
+const someGraph = builder.compile();
+
+const someWorkflow = entrypoint(
+  { name: "someWorkflow" },
+  async (someInput: Record<string, any>) => {
+    // 调用使用 Graph API 定义的图
+    const result1 = await someGraph.invoke(/* ... */);
+    // 调用另一个使用 Graph API 定义的图
+    const result2 = await anotherGraph.invoke(/* ... */);
+    return {
+      result1,
+      result2,
+    };
+  }
+);
+```
+
+
+<Accordion title="扩展示例：从函数式 API 调用简单图">
+
+
+  ```typescript
+  import { v4 as uuidv4 } from "uuid";
+  import { entrypoint, MemorySaver } from "@langchain/langgraph";
+  import { StateGraph } from "@langchain/langgraph";
+  import * as z from "zod";
+
+  // 定义共享状态类型
+  const State = z.object({
+    foo: z.number(),
+  });
+
+  // 使用 Graph API 构建图
+  const builder = new StateGraph(State)
+    .addNode("double", (state) => {
+      return { foo: state.foo * 2 };
+    })
+    .addEdge("__start__", "double");
+  const graph = builder.compile();
+
+  // 定义函数式 API 工作流
+  const checkpointer = new MemorySaver();
+
+  const workflow = entrypoint(
+    { checkpointer, name: "workflow" },
+    async (x: number) => {
+      const result = await graph.invoke({ foo: x });
+      return { bar: result.foo };
+    }
+  );
+
+  // 执行工作流
+  const config = { configurable: { thread_id: uuidv4() } };
+  console.log(await workflow.invoke(5, config)); // Output: { bar: 10 }
+  ```
+
+</Accordion>
+
+## 调用其他入口点
+
+您可以从 **entrypoint** 或 **task** 内部调用其他 **entrypoints**。
+
+
+
+```typescript
+// 将自动使用父 entrypoint 的 checkpointer
+const someOtherWorkflow = entrypoint(
+  { name: "someOtherWorkflow" },
+  async (inputs: { value: number }) => {
+    return inputs.value;
+  }
+);
+
+const myWorkflow = entrypoint(
+  { checkpointer, name: "myWorkflow" },
+  async (inputs: { value: number }) => {
+    const value = await someOtherWorkflow.invoke({ value: 1 });
+    return value;
+  }
+);
+```
+
+
+<Accordion title="扩展示例：调用另一个入口点">
+
+
+  ```typescript
+  import { v4 as uuidv4 } from "uuid";
+  import { entrypoint, MemorySaver } from "@langchain/langgraph";
+
+  // 初始化 checkpointer
+  const checkpointer = new MemorySaver();
+
+  // 一个可重用的子工作流，用于将数字相乘
+  const multiply = entrypoint(
+    { name: "multiply" },
+    async (inputs: { a: number; b: number }) => {
+      return inputs.a * inputs.b;
+    }
+  );
+
+  // 调用子工作流的主工作流
+  const main = entrypoint(
+    { checkpointer, name: "main" },
+    async (inputs: { x: number; y: number }) => {
+      const result = await multiply.invoke({ a: inputs.x, b: inputs.y });
+      return { product: result };
+    }
+  );
+
+  // 执行主工作流
+  const config = { configurable: { thread_id: uuidv4() } };
+  console.log(await main.invoke({ x: 6, y: 7 }, config)); // Output: { product: 42 }
+  ```
+
+</Accordion>
+
+## 流式传输
+
+**函数式 API** 使用与 **Graph API** 相同的流式传输机制。请阅读[**流式传输指南**](/oss/javascript/langgraph/streaming)部分了解更多详情。
+
+使用流式传输 API 流式传输更新和自定义数据的示例。
+
+
+
+```typescript
+import {
+  entrypoint,
+  MemorySaver,
+  LangGraphRunnableConfig,
+} from "@langchain/langgraph";
+
+const checkpointer = new MemorySaver();
+
+const main = entrypoint(
+  { checkpointer, name: "main" },
+  async (
+    inputs: { x: number },
+    config: LangGraphRunnableConfig
+  ): Promise<number> => {
+    config.writer?.("Started processing");   // [!code highlight]
+    const result = inputs.x * 2;
+    config.writer?.(`Result is ${result}`);   // [!code highlight]
+    return result;
+  }
+);
+
+const config = { configurable: { thread_id: "abc" } };
+
+  // [!code highlight]
+for await (const [mode, chunk] of await main.stream(
+  { x: 5 },
+  { streamMode: ["custom", "updates"], ...config }   // [!code highlight]
+)) {
+  console.log(`${mode}: ${JSON.stringify(chunk)}`);
+}
+```
+
+1. 在计算开始前发出自定义数据。
+2. 在计算结果后发出另一个自定义消息。
+3. 使用 `.stream()` 处理流式输出。
+4. 指定要使用的流式传输模式。
+
+```
+updates: {"addOne": 2}
+updates: {"addTwo": 3}
+custom: "hello"
+custom: "world"
+updates: {"main": 5}
+```
+
+
+## 重试策略
+
+
+
+```typescript
+import {
+  MemorySaver,
+  entrypoint,
+  task,
+  RetryPolicy,
+} from "@langchain/langgraph";
+
+// 此变量仅用于演示目的，以模拟网络故障。
+// 这不是您在实际代码中会有的内容。
+let attempts = 0;
+
+// 让我们配置 RetryPolicy 以在 ValueError 时重试。
+// 默认的 RetryPolicy 针对重试特定网络错误进行了优化。
+const retryPolicy: RetryPolicy = { retryOn: (error) => error instanceof Error };
+
+const getInfo = task(
+  {
+    name: "getInfo",
+    retry: retryPolicy,
+  },
+  () => {
+    attempts += 1;
+
+    if (attempts < 2) {
+      throw new Error("Failure");
+    }
+    return "OK";
+  }
+);
+
+const checkpointer = new MemorySaver();
+
+const main = entrypoint(
+  { checkpointer, name: "main" },
+  async (inputs: Record<string, any>) => {
+    return await getInfo();
+  }
+);
+
+const config = {
+  configurable: {
+    thread_id: "1",
+  },
+};
+
+await main.invoke({ any_input: "foobar" }, config);
+```
+
+```
+'OK'
+```
+
+
+## 缓存任务
+
+
+
+```typescript
+import {
+  InMemoryCache,
+  entrypoint,
+  task,
+  CachePolicy,
+} from "@langchain/langgraph";
+
+const slowAdd = task(
+  {
+    name: "slowAdd",
+    cache: { ttl: 120 },   // [!code highlight]
+  },
+  async (x: number) => {
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    return x * 2;
+  }
+);
+
+const main = entrypoint(
+  { cache: new InMemoryCache(), name: "main" },
+  async (inputs: { x: number }) => {
+    const result1 = await slowAdd(inputs.x);
+    const result2 = await slowAdd(inputs.x);
+    return { result1, result2 };
+  }
+);
+
+for await (const chunk of await main.stream(
+  { x: 5 },
+  { streamMode: "updates" }
+)) {
+  console.log(chunk);
+}
+
+//> { slowAdd: 10 }
+//> { slowAdd: 10, '__metadata__': { cached: true } }
+//> { main: { result1: 10, result2: 10 } }
+```
+
+1. `ttl` 以秒为单位指定。缓存将在此时间后失效。
+
+
+## 错误后恢复
+
+
+
+```typescript
+import { entrypoint, task, MemorySaver } from "@langchain/langgraph";
+
+// 此变量仅用于演示目的，以模拟网络故障。
+// 这不是您在实际代码中会有的内容。
+let attempts = 0;
+
+const getInfo = task("getInfo", async () => {
+  /**
+   * 模拟一个在成功前失败一次的任务。
+   * 在第一次尝试时抛出异常，然后在后续尝试中返回 "OK"。
+   */
+  attempts += 1;
+
+  if (attempts < 2) {
+    throw new Error("Failure"); // 模拟第一次尝试时的失败
+  }
+  return "OK";
+});
+
+// 初始化用于持久化的内存 checkpointer
+const checkpointer = new MemorySaver();
+
+const slowTask = task("slowTask", async () => {
+  /**
+   * 通过引入 1 秒延迟来模拟慢速运行的任务。
+   */
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  return "Ran slow task.";
+});
+
+const main = entrypoint(
+  { checkpointer, name: "main" },
+  async (inputs: Record<string, any>) => {
+    /**
+     * 按顺序运行 slowTask 和 getInfo 任务的主工作流函数。
+     *
+     * 参数：
+     * - inputs: 包含工作流输入值的 Record<string, any>。
+     *
+     * 工作流首先执行 `slowTask`，然后尝试执行 `getInfo`，
+     * 这将在第一次调用时失败。
+     */
+    const slowTaskResult = await slowTask(); // 对 slowTask 的阻塞调用
+    await getInfo(); // 第一次尝试时这里会抛出异常
+    return slowTaskResult;
+  }
+);
+
+// 带有唯一线程标识符的工作流执行配置
+const config = {
+  configurable: {
+    thread_id: "1", // 用于跟踪工作流执行的唯一标识符
+  },
+};
+
+// 由于 slowTask 的执行，此调用将花费约 1 秒
+try {
+  // 由于 `getInfo` 任务失败，第一次调用将抛出异常
+  await main.invoke({ any_input: "foobar" }, config);
+} catch (err) {
+  // 优雅地处理失败
+}
+```
+
+当我们恢复执行时，不需要重新运行 `slowTask`，因为它的结果已经保存在检查点中。
+
+```typescript
+await main.invoke(null, config);
+```
+
+```
+'Ran slow task.'
+```
+
+
+## 人在回路
+
+函数式 API 支持使用 [`interrupt`](https://langchain-ai.github.io/langgraphjs/reference/functions/langgraph.interrupt-2.html) 函数和 `Command` 原语的[人在回路](/oss/javascript/langgraph/interrupts)工作流。
+
+### 基本人在回路工作流
+
+我们将创建三个[任务](/oss/javascript/langgraph/functional-api#task)：
+
+1. 追加 `"bar"`。
+2. 暂停等待人工输入。恢复时，追加人工输入。
+3. 追加 `"qux"`。
+
+
+
+```typescript
+import { entrypoint, task, interrupt, Command } from "@langchain/langgraph";
+
+const step1 = task("step1", async (inputQuery: string) => {
+  // 追加 bar
+  return `${inputQuery} bar`;
+});
+
+const humanFeedback = task("humanFeedback", async (inputQuery: string) => {
+  // 追加用户输入
+  const feedback = interrupt(`Please provide feedback: ${inputQuery}`);
+  return `${inputQuery} ${feedback}`;
+});
+
+const step3 = task("step3", async (inputQuery: string) => {
+  // 追加 qux
+  return `${inputQuery} qux`;
+});
+```
+
+
+我们现在可以在[入口点](/oss/javascript/langgraph/functional-api#entrypoint)中组合这些任务：
+
+
+
+```typescript
+import { MemorySaver } from "@langchain/langgraph";
+
+const checkpointer = new MemorySaver();
+
+const graph = entrypoint(
+  { checkpointer, name: "graph" },
+  async (inputQuery: string) => {
+    const result1 = await step1(inputQuery);
+    const result2 = await humanFeedback(result1);
+    const result3 = await step3(result2);
+
+    return result3;
+  }
+);
+```
+
+
+[interrupt()](/oss/javascript/langgraph/interrupts#pause-using-interrupt) 在任务内部调用，使人类能够审查和编辑前一个任务的输出。先前任务的结果——在这种情况下是 `step_1`——被持久化，因此在 [`interrupt`](https://langchain-ai.github.io/langgraphjs/reference/functions/langgraph.interrupt-2.html) 之后不会再次运行。
+
+让我们发送一个查询字符串：
+
+
+
+```typescript
+const config = { configurable: { thread_id: "1" } };
+
+for await (const event of await graph.stream("foo", config)) {
+  console.log(event);
+  console.log("\n");
+}
+```
+
+
+请注意，我们在 `step_1` 之后使用 [`interrupt`](https://langchain-ai.github.io/langgraphjs/reference/functions/langgraph.interrupt-2.html) 暂停了。中断提供了恢复运行的说明。要恢复，我们发出一个包含 `human_feedback` 任务期望数据的 [`Command`](/oss/javascript/langgraph/interrupts#resuming-interrupts)。
+
+
+
+```typescript
+// 继续执行
+for await (const event of await graph.stream(
+  new Command({ resume: "baz" }),
+  config
+)) {
+  console.log(event);
+  console.log("\n");
+}
+```
+
+
+恢复后，运行继续执行剩余步骤并按预期终止。
+
+### 审查工具调用
+
+要在执行前审查工具调用，我们添加一个调用 [`interrupt`](/oss/javascript/langgraph/interrupts#pause-using-interrupt) 的 `review_tool_call` 函数。调用此函数时，执行将暂停，直到我们发出恢复命令。
+
+给定一个工具调用，我们的函数将 [`interrupt`](https://langchain-ai.github.io/langgraphjs/reference/functions/langgraph.interrupt-2.html) 以进行人工审查。此时我们可以：
+
+* 接受工具调用
+* 修订工具调用并继续
+* 生成自定义工具消息（例如，指示模型重新格式化其工具调用）
+
+
+
+```typescript
+import { ToolCall } from "@langchain/core/messages/tool";
+import { ToolMessage } from "@langchain/core/messages";
+
+function reviewToolCall(toolCall: ToolCall): ToolCall | ToolMessage {
+  // 审查工具调用，返回验证后的版本
+  const humanReview = interrupt({
+    question: "Is this correct?",
+    tool_call: toolCall,
+  });
+
+  const reviewAction = humanReview.action;
+  const reviewData = humanReview.data;
+
+  if (reviewAction === "continue") {
+    return toolCall;
+  } else if (reviewAction === "update") {
+    const updatedToolCall = { ...toolCall, args: reviewData };
+    return updatedToolCall;
+  } else if (reviewAction === "feedback") {
+    return new ToolMessage({
+      content: reviewData,
+      name: toolCall.name,
+      tool_call_id: toolCall.id,
+    });
+  }
+
+  throw new Error(`Unknown review action: ${reviewAction}`);
+}
+```
+
+
+我们现在可以更新我们的[入口点](/oss/javascript/langgraph/functional-api#entrypoint)以审查生成的工具调用。如果工具调用被接受或修订，我们以与之前相同的方式执行。否则，我们只追加人类提供的 @[`ToolMessage`]。先前任务的结果——在这种情况下是初始模型调用——被持久化，因此在 [`interrupt`](https://langchain-ai.github.io/langgraphjs/reference/functions/langgraph.interrupt-2.html) 之后不会再次运行。
+
+
+
+```typescript
+import {
+  MemorySaver,
+  entrypoint,
+  interrupt,
+  Command,
+  addMessages,
+} from "@langchain/langgraph";
+import { ToolMessage, AIMessage, BaseMessage } from "@langchain/core/messages";
+
+const checkpointer = new MemorySaver();
+
+const agent = entrypoint(
+  { checkpointer, name: "agent" },
+  async (
+    messages: BaseMessage[],
+    previous?: BaseMessage[]
+  ): Promise<BaseMessage> => {
+    if (previous !== undefined) {
+      messages = addMessages(previous, messages);
+    }
+
+    let modelResponse = await callModel(messages);
+    while (true) {
+      if (!modelResponse.tool_calls?.length) {
+        break;
+      }
+
+      // 审查工具调用
+      const toolResults: ToolMessage[] = [];
+      const toolCalls: ToolCall[] = [];
+
+      for (let i = 0; i < modelResponse.tool_calls.length; i++) {
+        const review = reviewToolCall(modelResponse.tool_calls[i]);
+        if (review instanceof ToolMessage) {
+          toolResults.push(review);
+        } else {
+          // 是验证后的工具调用
+          toolCalls.push(review);
+          if (review !== modelResponse.tool_calls[i]) {
+            modelResponse.tool_calls[i] = review; // 更新消息
+          }
+        }
+      }
+
+      // 执行剩余的工具调用
+      const remainingToolResults = await Promise.all(
+        toolCalls.map((toolCall) => callTool(toolCall))
+      );
+
+      // 追加到消息列表
+      messages = addMessages(messages, [
+        modelResponse,
+        ...toolResults,
+        ...remainingToolResults,
+      ]);
+
+      // 再次调用模型
+      modelResponse = await callModel(messages);
+    }
+
+    // 生成最终响应
+    messages = addMessages(messages, modelResponse);
+    return entrypoint.final({ value: modelResponse, save: messages });
+  }
+);
+```
+
+
+## 短期内存
+
+短期内存允许在同一**线程 id** 的不同**调用**之间存储信息。有关更多详细信息，请参阅[短期内存](/oss/javascript/langgraph/functional-api#short-term-memory)。
+
+### 管理检查点
+
+您可以查看和删除 checkpointer 存储的信息。
+
+<a id="checkpoint"></a>
+#### 查看线程状态
+
+
+
+```typescript
+const config = {
+  configurable: {
+    thread_id: "1",  // [!code highlight]
+    // 可选地提供特定检查点的 ID，
+    // 否则显示最新的检查点
+    // checkpoint_id: "1f029ca3-1f5b-6704-8004-820c16b69a5a" [!code highlight]
+  },
+};
+await graph.getState(config);  // [!code highlight]
+```
+
+```
+StateSnapshot {
+  values: {
+    messages: [
+      HumanMessage { content: "hi! I'm bob" },
+      AIMessage { content: "Hi Bob! How are you doing today?" },
+      HumanMessage { content: "what's my name?" },
+      AIMessage { content: "Your name is Bob." }
+    ]
+  },
+  next: [],
+  config: { configurable: { thread_id: '1', checkpoint_ns: '', checkpoint_id: '1f029ca3-1f5b-6704-8004-820c16b69a5a' } },
+  metadata: {
+    source: 'loop',
+    writes: { call_model: { messages: AIMessage { content: "Your name is Bob." } } },
+    step: 4,
+    parents: {},
+    thread_id: '1'
+  },
+  createdAt: '2025-05-05T16:01:24.680462+00:00',
+  parentConfig: { configurable: { thread_id: '1', checkpoint_ns: '', checkpoint_id: '1f029ca3-1790-6b0a-8003-baf965b6a38f' } },
+  tasks: [],
+  interrupts: []
+}
+```
+
+
+<a id="checkpoints"></a>
+#### 查看线程历史
+
+
+
+```typescript
+const config = {
+  configurable: {
+    thread_id: "1",  // [!code highlight]
+  },
+};
+const history = [];  // [!code highlight]
+for await (const state of graph.getStateHistory(config)) {
+  history.push(state);
+}
+```
+
+```
+[
+  StateSnapshot {
+    values: {
+      messages: [
+        HumanMessage { content: "hi! I'm bob" },
+        AIMessage { content: "Hi Bob! How are you doing today? Is there anything I can help you with?" },
+        HumanMessage { content: "what's my name?" },
+        AIMessage { content: "Your name is Bob." }
+      ]
+    },
+    next: [],
+    config: { configurable: { thread_id: '1', checkpoint_ns: '', checkpoint_id: '1f029ca3-1f5b-6704-8004-820c16b69a5a' } },
+    metadata: { source: 'loop', writes: { call_model: { messages: AIMessage { content: "Your name is Bob." } } }, step: 4, parents: {}, thread_id: '1' },
+    createdAt: '2025-05-05T16:01:24.680462+00:00',
+    parentConfig: { configurable: { thread_id: '1', checkpoint_ns: '', checkpoint_id: '1f029ca3-1790-6b0a-8003-baf965b6a38f' } },
+    tasks: [],
+    interrupts: []
+  },
+  // ... more state snapshots
+]
+```
+
+
+### 将返回值与保存值解耦
+
+使用 `entrypoint.final` 将返回给调用者的内容与检查点中持久化的内容解耦。这在以下情况下很有用：
+
+* 您想要返回计算结果（例如，摘要或状态），但保存不同的内部值以供下次调用使用。
+* 您需要控制下次运行时传递给 previous 参数的内容。
+
+
+
+```typescript
+import { entrypoint, MemorySaver } from "@langchain/langgraph";
+
+const checkpointer = new MemorySaver();
+
+const accumulate = entrypoint(
+  { checkpointer, name: "accumulate" },
+  async (n: number, previous?: number) => {
+    const prev = previous || 0;
+    const total = prev + n;
+    // 将*之前的*值返回给调用者，但将*新的*总数保存到检查点。
+    return entrypoint.final({ value: prev, save: total });
+  }
+);
+
+const config = { configurable: { thread_id: "my-thread" } };
+
+console.log(await accumulate.invoke(1, config)); // 0
+console.log(await accumulate.invoke(2, config)); // 1
+console.log(await accumulate.invoke(3, config)); // 3
+```
+
+
+### 聊天机器人示例
+
+使用函数式 API 和 @[`InMemorySaver`] checkpointer 的简单聊天机器人示例。
+
+机器人能够记住之前的对话并从上次停止的地方继续。
+
+
+
+```typescript
+import { BaseMessage } from "@langchain/core/messages";
+import {
+  addMessages,
+  entrypoint,
+  task,
+  MemorySaver,
+} from "@langchain/langgraph";
+import { ChatAnthropic } from "@langchain/anthropic";
+
+const model = new ChatAnthropic({ model: "claude-sonnet-4-5-20250929" });
+
+const callModel = task(
+  "callModel",
+  async (messages: BaseMessage[]): Promise<BaseMessage> => {
+    const response = await model.invoke(messages);
+    return response;
+  }
+);
+
+const checkpointer = new MemorySaver();
+
+const workflow = entrypoint(
+  { checkpointer, name: "workflow" },
+  async (
+    inputs: BaseMessage[],
+    previous?: BaseMessage[]
+  ): Promise<BaseMessage> => {
+    let messages = inputs;
+    if (previous) {
+      messages = addMessages(previous, inputs);
+    }
+
+    const response = await callModel(messages);
+    return entrypoint.final({
+      value: response,
+      save: addMessages(messages, response),
+    });
+  }
+);
+
+const config = { configurable: { thread_id: "1" } };
+const inputMessage = { role: "user", content: "hi! I'm bob" };
+
+for await (const chunk of await workflow.stream([inputMessage], {
+  ...config,
+  streamMode: "values",
+})) {
+  console.log(chunk.content);
+}
+
+const inputMessage2 = { role: "user", content: "what's my name?" };
+for await (const chunk of await workflow.stream([inputMessage2], {
+  ...config,
+  streamMode: "values",
+})) {
+  console.log(chunk.content);
+}
+```
+
+
+## 长期内存
+
+[长期内存](/oss/javascript/concepts/memory#long-term-memory) 允许在不同的**线程 id** 之间存储信息。这对于在一个对话中学习关于给定用户的信息并在另一个对话中使用它很有用。
+
+## 工作流
+
+* [工作流和代理](/oss/javascript/langgraph/workflows-agents) 指南，提供更多使用函数式 API 构建工作流的示例。
+
+## 与其他库集成
+
+* [使用函数式 API 将 LangGraph 的功能添加到其他框架](/langsmith/autogen-integration)：将 LangGraph 的功能（如持久化、内存和流式传输）添加到其他不提供这些功能的代理框架中。
+
+---
+
+<Callout icon="pen-to-square" iconType="regular">
+    [Edit the source of this page on GitHub.](https://github.com/langchain-ai/docs/edit/main/src/oss\langgraph\use-functional-api.mdx)
+</Callout>
+<Tip icon="terminal" iconType="regular">
+    [Connect these docs programmatically](/use-these-docs) to Claude, VSCode, and more via MCP for real-time answers.
+</Tip>

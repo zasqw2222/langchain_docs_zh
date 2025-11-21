@@ -1,0 +1,77 @@
+---
+title: 概述
+description: 在每一步控制和自定义代理执行
+---
+
+中间件提供了一种更紧密地控制代理内部发生情况的方法。中间件在以下场景很有用：
+
+- 通过日志记录、分析和调试跟踪代理行为。
+- 转换提示、[工具选择](/oss/python/langchain/middleware/built-in#llm-tool-selector)和输出格式。
+- 添加[重试](/oss/python/langchain/middleware/built-in#tool-retry)、[回退](/oss/python/langchain/middleware/built-in#model-fallback)和早期终止逻辑。
+- 应用[速率限制](/oss/python/langchain/middleware/built-in#model-call-limit)、防护栏和[PII 检测](/oss/python/langchain/middleware/built-in#pii-detection)。
+
+通过将它们传递给 [`create_agent`](https://reference.langchain.com/python/langchain/agents/#langchain.agents.create_agent) 来添加中间件：
+
+
+```python
+from langchain.agents import create_agent
+from langchain.agents.middleware import SummarizationMiddleware, HumanInTheLoopMiddleware
+
+agent = create_agent(
+    model="gpt-4o",
+    tools=[...],
+    middleware=[
+        SummarizationMiddleware(...),
+        HumanInTheLoopMiddleware(...)
+    ],
+)
+```
+
+
+
+
+## 代理循环
+
+核心代理循环包括调用模型、让它选择要执行的工具，然后在它不再调用工具时完成：
+
+<img
+    src="/oss/images/core_agent_loop.png"
+    alt="Core agent loop diagram"
+    style={{height: "200px", width: "auto", justifyContent: "center"}}
+    className="rounded-lg block mx-auto"
+/>
+
+中间件在每个步骤之前和之后暴露钩子：
+
+<img
+    src="/oss/images/middleware_final.png"
+    alt="Middleware flow diagram"
+    style={{height: "300px", width: "auto", justifyContent: "center"}}
+    className="rounded-lg mx-auto"
+/>
+
+## 其他资源
+
+<CardGroup cols={2}>
+    <Card title="内置中间件" icon="box" href="/oss/python/langchain/middleware/built-in">
+        探索常见用例的内置中间件。
+    </Card>
+    <Card title="自定义中间件" icon="code" href="/oss/python/langchain/middleware/custom">
+        使用钩子和装饰器构建您自己的中间件。
+    </Card>
+    <Card title="中间件 API 参考" icon="book" href="https://reference.langchain.com/python/langchain/middleware/">
+        中间件的完整 API 参考。
+    </Card>
+    <Card title="测试代理" icon="scale-unbalanced" href="/oss/python/langchain/test">
+        使用 LangSmith 测试您的代理。
+    </Card>
+</CardGroup>
+
+---
+
+<Callout icon="pen-to-square" iconType="regular">
+    [Edit the source of this page on GitHub.](https://github.com/langchain-ai/docs/edit/main/src/oss\langchain\middleware\overview.mdx)
+</Callout>
+<Tip icon="terminal" iconType="regular">
+    [Connect these docs programmatically](/use-these-docs) to Claude, VSCode, and more via MCP for real-time answers.
+</Tip>

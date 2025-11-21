@@ -1,0 +1,94 @@
+---
+title: LangChain 概述
+sidebarTitle: 概述
+---
+
+<Callout icon="bullhorn" color="#DFC5FE" iconType="regular">
+    **LangChain 1.0现已发布！**
+
+    如需完整的更改列表和升级代码的说明，请参阅 [更新说明](/oss/python/releases/langchain-v1) and [迁移指南](/oss/python/migrate/langchain-v1).
+
+    如果你遇到任何问题或有反馈，请 [打开一个议题](https://github.com/langchain-ai/docs/issues/new?template=01-langchain.yml) 以便我们改进。如需查看 v0.x 文档， [访问归档内容](https://github.com/langchain-ai/langchain/tree/v0.3/docs/docs).
+</Callout>
+
+
+
+
+LangChain 是开始构建由大型语言模型（LLM）驱动的代理和应用程序的最简单方式。只需不到 10 行代码，您就可以连接到 OpenAI、Anthropic、Google 等平台。 [more](/oss/python/integrations/providers/overview).LangChain 提供了预先构建的代理架构和模型集成，帮助您快速入门，并无缝地将大语言模型（LLMs）集成到您的代理和应用程序中。
+
+
+我们建议您使用 LangChain 来快速构建代理和自主应用程序。[LangGraph](/oss/python/langgraph/overview),我们的低级代理编排框架和运行时，适用于需要结合确定性和智能代理工作流、高度定制以及严格控制延迟的更高级需求。
+
+LangChain [代理](/oss/python/langchain/agents) 构建在 LangGraph 之上，以提供持久化执行、流式处理、人工介入、持久化等功能。对于基本的 LangChain 代理使用，您无需了解 LangGraph。
+
+## <Icon icon="download" size={20} /> 安装
+
+<CodeGroup>
+```bash pip
+pip install -U langchain
+# Requires Python 3.10+
+```
+
+```bash uv
+uv add langchain
+# Requires Python 3.10+
+```
+</CodeGroup>
+
+
+
+## <Icon icon="wand-magic-sparkles" /> 创建代理
+
+```python
+# pip install -qU "langchain[anthropic]" to call the model
+
+from langchain.agents import create_agent
+
+def get_weather(city: str) -> str:
+    """Get weather for a given city."""
+    return f"It's always sunny in {city}!"
+
+agent = create_agent(
+    model="claude-sonnet-4-5-20250929",
+    tools=[get_weather],
+    system_prompt="You are a helpful assistant",
+)
+
+# Run the agent
+agent.invoke(
+    {"messages": [{"role": "user", "content": "what is the weather in sf"}]}
+)
+```
+
+
+
+
+
+## <Icon icon="star" size={20} /> 核心优势
+
+<Columns cols={2}>
+    <Card title="标准化模型接口" icon="arrows-rotate" href="/oss/python/langchain/models" arrow cta="了解更多">
+        不同的提供商具有独特的模型交互 API，包括响应格式。LangChain 标准化了您与模型的交互方式，使您可以无缝切换提供商并避免锁定。
+    </Card>
+
+    <Card title="易于使用、高度灵活的代理" icon="wand-magic-sparkles" href="/oss/python/langchain/agents" arrow cta="了解更多">
+        LangChain 的代理抽象设计为易于上手，让您可以用不到 10 行代码构建一个简单的代理。但它也提供了足够的灵活性，让您可以进行所有您想要的上下文工程。
+    </Card>
+
+    <Card title="构建在 LangGraph 之上" icon="circle-nodes" href="/oss/python/langgraph/overview" arrow cta="了解更多">
+        LangChain 的代理构建在 LangGraph 之上。这使我们能够利用 LangGraph 的持久化执行、人工介入支持、持久化等功能。
+    </Card>
+
+    <Card title="使用 LangSmith 进行调试" icon="eye" href="/langsmith/home" arrow cta="了解更多">
+        通过可视化工具深入了解复杂代理行为，这些工具可以跟踪执行路径、捕获状态转换并提供详细的运行时指标。
+    </Card>
+</Columns>
+
+---
+
+<Callout icon="pen-to-square" iconType="regular">
+    [Edit the source of this page on GitHub.](https://github.com/langchain-ai/docs/edit/main/src/oss\langchain\overview.mdx)
+</Callout>
+<Tip icon="terminal" iconType="regular">
+    [Connect these docs programmatically](/use-these-docs) to Claude, VSCode, and more via MCP for real-time answers.
+</Tip>

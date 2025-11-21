@@ -1,0 +1,98 @@
+---
+title: 自定义深度代理
+sidebarTitle: 自定义
+description: 了解如何使用系统提示、工具、子代理等自定义深度代理
+---
+
+## 模型
+
+默认情况下，`deepagents` 使用 `"claude-sonnet-4-5-20250929"`。您可以通过传递任何 [LangChain 模型对象](https://python.langchain.com/docs/integrations/chat/) 来自定义此设置。
+
+```python
+from langchain.chat_models import init_chat_model
+from deepagents import create_deep_agent
+
+model = init_chat_model(
+    model="gpt-5",
+)
+agent = create_deep_agent(
+    model=model,
+)
+```
+
+
+
+
+## 系统提示
+
+深度代理附带一个内置的系统提示，灵感来自 Claude Code 的系统提示。默认系统提示包含使用内置规划工具、文件系统工具和子代理的详细说明。
+
+每个针对特定用例定制的深度代理都应包含特定于该用例的自定义系统提示。
+
+```python
+from deepagents import create_deep_agent
+
+research_instructions = """\
+You are an expert researcher. Your job is to conduct \
+thorough research, and then write a polished report. \
+"""
+
+agent = create_deep_agent(
+    system_prompt=research_instructions,
+)
+```
+
+
+
+
+## 工具
+
+就像工具调用代理一样，深度代理可以访问一组顶级工具。
+
+```python
+import os
+from typing import Literal
+from tavily import TavilyClient
+from deepagents import create_deep_agent
+
+tavily_client = TavilyClient(api_key=os.environ["TAVILY_API_KEY"])
+
+def internet_search(
+    query: str,
+    max_results: int = 5,
+    topic: Literal["general", "news", "finance"] = "general",
+    include_raw_content: bool = False,
+):
+    """运行网络搜索"""
+    return tavily_client.search(
+        query,
+        max_results=max_results,
+        include_raw_content=include_raw_content,
+        topic=topic,
+    )
+
+agent = create_deep_agent(
+    tools=[internet_search]
+)
+```
+
+
+
+
+除了您提供的任何工具外，深度代理还可以访问许多默认工具：
+
+- `write_todos` – 更新代理的待办事项列表
+- `ls` – 列出代理文件系统中的所有文件
+- `read_file` – 从代理的文件系统读取文件
+- `write_file` – 在代理的文件系统中写入新文件
+- `edit_file` – 编辑代理文件系统中的现有文件
+- `task` – 生成子代理来处理特定任务
+
+---
+
+<Callout icon="pen-to-square" iconType="regular">
+    [Edit the source of this page on GitHub.](https://github.com/langchain-ai/docs/edit/main/src/oss\deepagents\customization.mdx)
+</Callout>
+<Tip icon="terminal" iconType="regular">
+    [Connect these docs programmatically](/use-these-docs) to Claude, VSCode, and more via MCP for real-time answers.
+</Tip>

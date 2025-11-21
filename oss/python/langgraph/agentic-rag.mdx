@@ -1,0 +1,549 @@
+---
+title: 构建自定义 RAG 代理
+sidebarTitle: 自定义 RAG 代理
+---
+
+
+
+## 概述
+
+在本教程中，我们将使用 LangGraph 构建一个[检索](/oss/python/langchain/retrieval)代理。
+
+LangChain 提供内置的[代理](/oss/python/langchain/agents)实现，这些实现使用 [LangGraph](/oss/python/langgraph/overview) 原语实现。如果需要更深入的定制，可以直接在 LangGraph 中实现代理。本指南演示了检索代理的示例实现。[检索](/oss/python/langchain/retrieval)代理在您希望 LLM 决定是从向量存储检索上下文还是直接响应用户时很有用。
+
+在本教程结束时，我们将完成以下工作：
+
+1. 获取和预处理将用于检索的文档。
+2. 为这些文档建立语义搜索索引，并为代理创建检索器工具。
+3. 构建一个能够决定何时使用检索器工具的代理式 RAG 系统。
+
+![混合 RAG](/images/langgraph-hybrid-rag-tutorial.png)
+
+### 概念
+
+我们将涵盖以下概念：
+
+- 使用[文档加载器](/oss/python/integrations/document_loaders)、[文本分割器](/oss/python/integrations/splitters)、[嵌入](/oss/python/integrations/text_embedding)和[向量存储](/oss/python/integrations/vectorstores)进行[检索](/oss/python/langchain/retrieval)
+- LangGraph [Graph API](/oss/python/langgraph/graph-api)，包括状态、节点、边和条件边。
+
+## 设置
+
+让我们下载所需的包并设置 API 密钥：
+
+```python
+pip install -U langgraph "langchain[openai]" langchain-community langchain-text-splitters bs4
+```
+
+```python
+import getpass
+import os
+
+
+def _set_env(key: str):
+    if key not in os.environ:
+        os.environ[key] = getpass.getpass(f"{key}:")
+
+
+_set_env("OPENAI_API_KEY")
+```
+
+
+
+
+<Tip>
+  注册 LangSmith 以快速发现问题并提高 LangGraph 项目的性能。[LangSmith](https://docs.smith.langchain.com) 让您可以使用跟踪数据来调试、测试和监控使用 LangGraph 构建的 LLM 应用程序。
+</Tip>
+
+## 1. 预处理文档
+
+1. 获取将在我们的 RAG 系统中使用的文档。我们将使用 [Lilian Weng 的优秀博客](https://lilianweng.github.io/)中最近的三页。我们将首先使用 `WebBaseLoader` 实用程序获取页面的内容：
+  ```python
+  from langchain_community.document_loaders import WebBaseLoader
+
+  urls = [
+      "https://lilianweng.github.io/posts/2024-11-28-reward-hacking/",
+      "https://lilianweng.github.io/posts/2024-07-07-hallucination/",
+      "https://lilianweng.github.io/posts/2024-04-12-diffusion-video/",
+  ]
+
+  docs = [WebBaseLoader(url).load() for url in urls]
+  ```
+  ```python
+  docs[0][0].page_content.strip()[:1000]
+  ```
+2. Split the fetched documents into smaller chunks for indexing into our vectorstore:
+  ```python
+  from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+  docs_list = [item for sublist in docs for item in sublist]
+
+  text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
+      chunk_size=100, chunk_overlap=50
+  )
+  doc_splits = text_splitter.split_documents(docs_list)
+  ```
+  ```python
+  doc_splits[0].page_content.strip()
+  ```
+
+
+
+
+## 2. 创建检索器工具
+
+现在我们已经有了分割的文档，可以将它们索引到用于语义搜索的向量存储中。
+
+1. 使用内存向量存储和 OpenAI 嵌入：
+  ```python
+  from langchain_core.vectorstores import InMemoryVectorStore
+  from langchain_openai import OpenAIEmbeddings
+
+  vectorstore = InMemoryVectorStore.from_documents(
+      documents=doc_splits, embedding=OpenAIEmbeddings()
+  )
+  retriever = vectorstore.as_retriever()
+  ```
+2. 使用 LangChain 的预构建 `create_retriever_tool` 创建检索器工具：
+  ```python
+  from langchain_classic.tools.retriever import create_retriever_tool
+
+  retriever_tool = create_retriever_tool(
+      retriever,
+      "retrieve_blog_posts",
+      "Search and return information about Lilian Weng blog posts.",
+  )
+  ```
+3. 测试工具：
+  ```python
+  retriever_tool.invoke({"query": "types of reward hacking"})
+  ```
+
+
+
+
+## 3. 生成查询
+
+现在我们将开始为我们的代理式 RAG 图构建组件（[节点](/oss/python/langgraph/graph-api#nodes)和[边](/oss/python/langgraph/graph-api#edges)）。
+
+请注意，组件将在 [`MessagesState`](/oss/python/langgraph/graph-api#messagesstate) 上运行——这是一个包含带有[聊天消息](https://python.langchain.com/docs/concepts/messages/)列表的 `messages` 键的图状态。
+
+1. 构建一个 `generate_query_or_respond` 节点。它将调用 LLM 根据当前图状态（消息列表）生成响应。给定输入消息，它将决定使用检索器工具进行检索，或直接响应用户。请注意，我们通过 `.bind_tools` 为聊天模型提供对之前创建的 `retriever_tool` 的访问权限：
+  ```python
+  from langgraph.graph import MessagesState
+  from langchain.chat_models import init_chat_model
+
+  response_model = init_chat_model("gpt-4o", temperature=0)
+
+
+  def generate_query_or_respond(state: MessagesState):
+      """Call the model to generate a response based on the current state. Given
+      the question, it will decide to retrieve using the retriever tool, or simply respond to the user.
+      """
+      response = (
+          response_model
+          .bind_tools([retriever_tool]).invoke(state["messages"])  # [!code highlight]
+      )
+      return {"messages": [response]}
+  ```
+2. Try it on a random input:
+  ```python
+  input = {"messages": [{"role": "user", "content": "hello!"}]}
+  generate_query_or_respond(input)["messages"][-1].pretty_print()
+  ```
+  **Output:**
+  ```
+  ================================== Ai Message ==================================
+
+  Hello! How can I help you today?
+  ```
+3. Ask a question that requires semantic search:
+  ```python
+  input = {
+      "messages": [
+          {
+              "role": "user",
+              "content": "What does Lilian Weng say about types of reward hacking?",
+          }
+      ]
+  }
+  generate_query_or_respond(input)["messages"][-1].pretty_print()
+  ```
+  **Output:**
+  ```
+  ================================== Ai Message ==================================
+  Tool Calls:
+  retrieve_blog_posts (call_tYQxgfIlnQUDMdtAhdbXNwIM)
+  Call ID: call_tYQxgfIlnQUDMdtAhdbXNwIM
+  Args:
+      query: types of reward hacking
+  ```
+
+
+
+
+## 4. 评估文档
+
+1. 添加一个[条件边](/oss/python/langgraph/graph-api#conditional-edges)——`grade_documents`——以确定检索到的文档是否与问题相关。我们将使用带有结构化输出模式 `GradeDocuments` 的模型进行文档评估。`grade_documents` 函数将根据评估决策返回要前往的节点名称（`generate_answer` 或 `rewrite_question`）：
+  ```python
+  from pydantic import BaseModel, Field
+  from typing import Literal
+
+  GRADE_PROMPT = (
+      "You are a grader assessing relevance of a retrieved document to a user question. \n "
+      "Here is the retrieved document: \n\n {context} \n\n"
+      "Here is the user question: {question} \n"
+      "If the document contains keyword(s) or semantic meaning related to the user question, grade it as relevant. \n"
+      "Give a binary score 'yes' or 'no' score to indicate whether the document is relevant to the question."
+  )
+
+
+  class GradeDocuments(BaseModel):  # [!code highlight]
+      """Grade documents using a binary score for relevance check."""
+
+      binary_score: str = Field(
+          description="Relevance score: 'yes' if relevant, or 'no' if not relevant"
+      )
+
+
+  grader_model = init_chat_model("gpt-4o", temperature=0)
+
+
+  def grade_documents(
+      state: MessagesState,
+  ) -> Literal["generate_answer", "rewrite_question"]:
+      """Determine whether the retrieved documents are relevant to the question."""
+      question = state["messages"][0].content
+      context = state["messages"][-1].content
+
+      prompt = GRADE_PROMPT.format(question=question, context=context)
+      response = (
+          grader_model
+          .with_structured_output(GradeDocuments).invoke(  # [!code highlight]
+              [{"role": "user", "content": prompt}]
+          )
+      )
+      score = response.binary_score
+
+      if score == "yes":
+          return "generate_answer"
+      else:
+          return "rewrite_question"
+  ```
+2. Run this with irrelevant documents in the tool response:
+  ```python
+  from langchain_core.messages import convert_to_messages
+
+  input = {
+      "messages": convert_to_messages(
+          [
+              {
+                  "role": "user",
+                  "content": "What does Lilian Weng say about types of reward hacking?",
+              },
+              {
+                  "role": "assistant",
+                  "content": "",
+                  "tool_calls": [
+                      {
+                          "id": "1",
+                          "name": "retrieve_blog_posts",
+                          "args": {"query": "types of reward hacking"},
+                      }
+                  ],
+              },
+              {"role": "tool", "content": "meow", "tool_call_id": "1"},
+          ]
+      )
+  }
+  grade_documents(input)
+  ```
+3. Confirm that the relevant documents are classified as such:
+  ```python
+  input = {
+      "messages": convert_to_messages(
+          [
+              {
+                  "role": "user",
+                  "content": "What does Lilian Weng say about types of reward hacking?",
+              },
+              {
+                  "role": "assistant",
+                  "content": "",
+                  "tool_calls": [
+                      {
+                          "id": "1",
+                          "name": "retrieve_blog_posts",
+                          "args": {"query": "types of reward hacking"},
+                      }
+                  ],
+              },
+              {
+                  "role": "tool",
+                  "content": "reward hacking can be categorized into two types: environment or goal misspecification, and reward tampering",
+                  "tool_call_id": "1",
+              },
+          ]
+      )
+  }
+  grade_documents(input)
+  ```
+
+
+
+
+## 5. 重写问题
+
+1. 构建 `rewrite_question` 节点。检索器工具可能返回不相关的文档，这表明需要改进原始用户问题。为此，我们将调用 `rewrite_question` 节点：
+  ```python
+  from langchain.messages import HumanMessage
+
+  REWRITE_PROMPT = (
+      "Look at the input and try to reason about the underlying semantic intent / meaning.\n"
+      "Here is the initial question:"
+      "\n ------- \n"
+      "{question}"
+      "\n ------- \n"
+      "Formulate an improved question:"
+  )
+
+
+  def rewrite_question(state: MessagesState):
+      """Rewrite the original user question."""
+      messages = state["messages"]
+      question = messages[0].content
+      prompt = REWRITE_PROMPT.format(question=question)
+      response = response_model.invoke([{"role": "user", "content": prompt}])
+      return {"messages": [HumanMessage(content=response.content)]}
+  ```
+2. Try it out:
+  ```python
+  input = {
+      "messages": convert_to_messages(
+          [
+              {
+                  "role": "user",
+                  "content": "What does Lilian Weng say about types of reward hacking?",
+              },
+              {
+                  "role": "assistant",
+                  "content": "",
+                  "tool_calls": [
+                      {
+                          "id": "1",
+                          "name": "retrieve_blog_posts",
+                          "args": {"query": "types of reward hacking"},
+                      }
+                  ],
+              },
+              {"role": "tool", "content": "meow", "tool_call_id": "1"},
+          ]
+      )
+  }
+
+  response = rewrite_question(input)
+  print(response["messages"][-1].content)
+  ```
+  **Output:**
+  ```
+  What are the different types of reward hacking described by Lilian Weng, and how does she explain them?
+  ```
+
+
+
+
+## 6. 生成答案
+
+1. 构建 `generate_answer` 节点：如果我们通过评估器检查，可以根据原始问题和检索到的上下文生成最终答案：
+  ```python
+  GENERATE_PROMPT = (
+      "You are an assistant for question-answering tasks. "
+      "Use the following pieces of retrieved context to answer the question. "
+      "If you don't know the answer, just say that you don't know. "
+      "Use three sentences maximum and keep the answer concise.\n"
+      "Question: {question} \n"
+      "Context: {context}"
+  )
+
+
+  def generate_answer(state: MessagesState):
+      """Generate an answer."""
+      question = state["messages"][0].content
+      context = state["messages"][-1].content
+      prompt = GENERATE_PROMPT.format(question=question, context=context)
+      response = response_model.invoke([{"role": "user", "content": prompt}])
+      return {"messages": [response]}
+  ```
+2. Try it:
+  ```python
+  input = {
+      "messages": convert_to_messages(
+          [
+              {
+                  "role": "user",
+                  "content": "What does Lilian Weng say about types of reward hacking?",
+              },
+              {
+                  "role": "assistant",
+                  "content": "",
+                  "tool_calls": [
+                      {
+                          "id": "1",
+                          "name": "retrieve_blog_posts",
+                          "args": {"query": "types of reward hacking"},
+                      }
+                  ],
+              },
+              {
+                  "role": "tool",
+                  "content": "reward hacking can be categorized into two types: environment or goal misspecification, and reward tampering",
+                  "tool_call_id": "1",
+              },
+          ]
+      )
+  }
+
+  response = generate_answer(input)
+  response["messages"][-1].pretty_print()
+  ```
+  **Output:**
+  ```
+  ================================== Ai Message ==================================
+
+  Lilian Weng categorizes reward hacking into two types: environment or goal misspecification, and reward tampering. She considers reward hacking as a broad concept that includes both of these categories. Reward hacking occurs when an agent exploits flaws or ambiguities in the reward function to achieve high rewards without performing the intended behaviors.
+  ```
+
+
+
+
+## 7. 组装图
+
+现在我们将把所有节点和边组装成一个完整的图：
+
+* 从 `generate_query_or_respond` 开始，确定是否需要调用 `retriever_tool`
+* 使用 `tools_condition` 路由到下一步：
+  * 如果 `generate_query_or_respond` 返回 `tool_calls`，则调用 `retriever_tool` 检索上下文
+  * 否则，直接响应用户
+* 评估检索到的文档内容与问题的相关性（`grade_documents`）并路由到下一步：
+  * 如果不相关，使用 `rewrite_question` 重写问题，然后再次调用 `generate_query_or_respond`
+  * 如果相关，继续到 `generate_answer` 并使用带有检索到的文档上下文的 [`ToolMessage`](https://reference.langchain.com/python/langchain/messages/#langchain.messages.ToolMessage) 生成最终响应
+
+```python
+from langgraph.graph import StateGraph, START, END
+from langgraph.prebuilt import ToolNode, tools_condition
+
+workflow = StateGraph(MessagesState)
+
+# Define the nodes we will cycle between
+workflow.add_node(generate_query_or_respond)
+workflow.add_node("retrieve", ToolNode([retriever_tool]))
+workflow.add_node(rewrite_question)
+workflow.add_node(generate_answer)
+
+workflow.add_edge(START, "generate_query_or_respond")
+
+# Decide whether to retrieve
+workflow.add_conditional_edges(
+    "generate_query_or_respond",
+    # Assess LLM decision (call `retriever_tool` tool or respond to the user)
+    tools_condition,
+    {
+        # Translate the condition outputs to nodes in our graph
+        "tools": "retrieve",
+        END: END,
+    },
+)
+
+# Edges taken after the `action` node is called.
+workflow.add_conditional_edges(
+    "retrieve",
+    # Assess agent decision
+    grade_documents,
+)
+workflow.add_edge("generate_answer", END)
+workflow.add_edge("rewrite_question", "generate_query_or_respond")
+
+# Compile
+graph = workflow.compile()
+```
+
+可视化图：
+
+```python
+from IPython.display import Image, display
+
+display(Image(graph.get_graph().draw_mermaid_png()))
+```
+
+<img
+  src="/oss/images/agentic-rag-output.png"
+  alt="SQL agent graph"
+  style={{ height: "800px" }}
+/>
+
+
+
+
+## 8. 运行代理式 RAG
+
+现在让我们通过运行一个问题来测试完整的图：
+
+```python
+for chunk in graph.stream(
+    {
+        "messages": [
+            {
+                "role": "user",
+                "content": "What does Lilian Weng say about types of reward hacking?",
+            }
+        ]
+    }
+):
+    for node, update in chunk.items():
+        print("Update from node", node)
+        update["messages"][-1].pretty_print()
+        print("\n\n")
+```
+
+**Output:**
+
+```
+Update from node generate_query_or_respond
+================================== Ai Message ==================================
+Tool Calls:
+  retrieve_blog_posts (call_NYu2vq4km9nNNEFqJwefWKu1)
+ Call ID: call_NYu2vq4km9nNNEFqJwefWKu1
+  Args:
+    query: types of reward hacking
+
+
+
+Update from node retrieve
+================================= Tool Message ==================================
+Name: retrieve_blog_posts
+
+(Note: Some work defines reward tampering as a distinct category of misalignment behavior from reward hacking. But I consider reward hacking as a broader concept here.)
+At a high level, reward hacking can be categorized into two types: environment or goal misspecification, and reward tampering.
+
+Why does Reward Hacking Exist?#
+
+Pan et al. (2022) investigated reward hacking as a function of agent capabilities, including (1) model size, (2) action space resolution, (3) observation space noise, and (4) training time. They also proposed a taxonomy of three types of misspecified proxy rewards:
+
+Let's Define Reward Hacking#
+Reward shaping in RL is challenging. Reward hacking occurs when an RL agent exploits flaws or ambiguities in the reward function to obtain high rewards without genuinely learning the intended behaviors or completing the task as designed. In recent years, several related concepts have been proposed, all referring to some form of reward hacking:
+
+
+
+Update from node generate_answer
+================================== Ai Message ==================================
+
+Lilian Weng categorizes reward hacking into two types: environment or goal misspecification, and reward tampering. She considers reward hacking as a broad concept that includes both of these categories. Reward hacking occurs when an agent exploits flaws or ambiguities in the reward function to achieve high rewards without performing the intended behaviors.
+```
+
+---
+
+<Callout icon="pen-to-square" iconType="regular">
+    [Edit the source of this page on GitHub.](https://github.com/langchain-ai/docs/edit/main/src/oss\langgraph\agentic-rag.mdx)
+</Callout>
+<Tip icon="terminal" iconType="regular">
+    [Connect these docs programmatically](/use-these-docs) to Claude, VSCode, and more via MCP for real-time answers.
+</Tip>

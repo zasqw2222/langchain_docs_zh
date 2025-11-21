@@ -1,0 +1,478 @@
+---
+title: Google
+---
+
+本页面涵盖了 LangChain 与 [Google Gemini](https://ai.google.dev/gemini-api/docs)、[Google Cloud](https://cloud.google.com/) 以及其他 Google 产品（如 Google Maps、YouTube 等[更多](#other-google-products)）的所有集成。
+
+不确定使用哪个？
+
+<AccordionGroup>
+    <Accordion title="Google Generative AI (Gemini API & AI Studio)">
+        通过 [Gemini Developer API](https://ai.google.dev/) 直接访问 Google Gemini 模型。这通常是个人开发者的最佳起点。
+
+        [查看集成。](#google-generative-ai)
+    </Accordion>
+    <Accordion title="Google Cloud (Vertex AI & 其他服务)">
+        通过 [Google Cloud Platform](https://cloud.google.com/) 访问 Gemini 模型、Vertex AI Model Garden 和广泛的云服务（数据库、存储、文档 AI 等）。对于 Vertex AI 模型使用 `langchain-google-vertexai` 包，对于其他云服务使用特定包（例如 `langchain-google-community`、`langchain-google-cloud-sql-pg`）。这非常适合已经使用 Google Cloud 或需要企业功能（如 MLOps、特定模型调优或企业支持）的开发者。
+
+        [查看集成。](#google-cloud)
+    </Accordion>
+</AccordionGroup>
+
+有关差异的更多详细信息，请参阅 Google 的[从 Gemini API 迁移到 Vertex AI](https://ai.google.dev/gemini-api/docs/migrate-to-cloud) 指南。
+
+<Note>
+    Gemini 模型和 Vertex AI 平台的集成包在 [`langchain-google`](https://github.com/langchain-ai/langchain-google) 仓库中维护。
+
+    您可以在 `langchain-google-community` 包（本页列出）和 [`googleapis`](https://github.com/orgs/googleapis/repositories?q=langchain) Github 组织中找到大量 LangChain 与其他 Google API 和服务的集成。
+</Note>
+
+---
+
+## Google Generative AI
+
+使用 [Gemini Developer API](https://ai.google.dev/gemini-api/docs) 直接访问 Google Gemini 模型，最适合快速开发和实验。
+
+### 聊天模型
+
+<Columns cols={1}>
+    <Card title="ChatGoogleGenerativeAI" href="/oss/python/integrations/chat/google_generative_ai" cta="开始使用" icon="message" arrow>
+        通过 Gemini Developer API 访问 Google Gemini 聊天模型。
+    </Card>
+</Columns>
+
+### LLM
+
+<Columns cols={1}>
+    <Card title="GoogleGenerativeAI" href="/oss/python/integrations/llms/google_ai" cta="开始使用" icon="i-cursor" arrow>
+        使用（旧版）LLM 文本补全接口访问相同的 Gemini 模型。
+    </Card>
+</Columns>
+
+### 嵌入模型
+
+<Columns cols={1}>
+    <Card title="GoogleGenerativeAIEmbeddings" href="/oss/python/integrations/text_embedding/google_generative_ai" cta="开始使用" icon="layer-group" arrow>
+        Gemini 嵌入模型。
+    </Card>
+</Columns>
+
+---
+
+## Google Cloud
+
+通过 [Vertex AI](https://docs.cloud.google.com/vertex-ai/generative-ai/docs) 和特定云集成访问 Gemini 模型、Vertex AI Model Garden 和其他 Google Cloud 服务。
+
+### 聊天模型
+
+<Columns cols={2}>
+    <Card title="Vertex AI" icon="comments" href="/oss/python/integrations/chat/google_vertex_ai" cta="开始使用" arrow>
+        通过 Vertex AI 平台访问像 Gemini 这样的聊天模型。
+    </Card>
+    <Card title="Vertex AI Model Garden 上的 Anthropic" icon="comments" href="/oss/python/integrations/llms/google_vertex_ai" cta="开始使用" arrow />
+</Columns>
+
+<AccordionGroup>
+    <Accordion title="Vertex AI Model Garden 上的 Llama">
+        ```python wrap
+        from langchain_google_vertexai.model_garden_maas.llama import VertexModelGardenLlama
+        ```
+    </Accordion>
+    <Accordion title="Vertex AI Model Garden 上的 Mistral">
+        ```python wrap
+        from langchain_google_vertexai.model_garden_maas.mistral import VertexModelGardenMistral
+        ```
+    </Accordion>
+    <Accordion title="来自 Hugging Face 的本地 Gemma">
+        从 HuggingFace 加载的本地 Gemma 模型。
+
+        ```python wrap
+        from langchain_google_vertexai.gemma import GemmaChatLocalHF
+        ```
+    </Accordion>
+    <Accordion title="来自 Kaggle 的本地 Gemma">
+        从 Kaggle 加载的本地 Gemma 模型。
+
+        ```python wrap
+        from langchain_google_vertexai.gemma import GemmaChatLocalKaggle
+        ```
+    </Accordion>
+    <Accordion title="Vertex AI Model Garden 上的 Gemma">
+        ```python wrap
+        from langchain_google_vertexai.gemma import GemmaChatVertexAIModelGarden
+        ```
+    </Accordion>
+    <Accordion title="Vertex AI 图像字幕">
+        作为聊天实现的图像字幕模型。
+
+        ```python wrap
+        from langchain_google_vertexai.vision_models import VertexAIImageCaptioningChat
+        ```
+    </Accordion>
+    <Accordion title="Vertex AI 图像编辑器">
+        给定图像和提示，编辑图像。目前仅支持无掩码编辑。
+
+        ```python wrap
+        from langchain_google_vertexai.vision_models import VertexAIImageEditorChat
+        ```
+    </Accordion>
+    <Accordion title="Vertex AI 图像生成器">
+        根据提示生成图像。
+
+        ```python wrap
+        from langchain_google_vertexai.vision_models import VertexAIImageGeneratorChat
+        ```
+    </Accordion>
+    <Accordion title="Vertex AI 视觉问答">
+        视觉问答模型的聊天实现。
+
+        ```python wrap
+        from langchain_google_vertexai.vision_models import VertexAIVisualQnAChat
+        ```
+    </Accordion>
+</AccordionGroup>
+
+### LLM
+
+（旧版）字符串输入、字符串输出 LLM 接口。
+
+<Columns cols={2}>
+    <Card title="Vertex AI Model Garden" icon="i-cursor" href="/oss/python/integrations/llms/google_vertex_ai#vertex-model-garden" cta="开始使用" arrow>
+        通过 Vertex AI Model Garden 服务访问 Gemini 和数百个 OSS 模型。
+    </Card>
+</Columns>
+
+Gemma:
+
+<AccordionGroup>
+    <Accordion title="来自 Hugging Face 的本地 Gemma">
+        从 HuggingFace 加载的本地 Gemma 模型。
+
+        ```python wrap
+        from langchain_google_vertexai.gemma import GemmaLocalHF
+        ```
+    </Accordion>
+    <Accordion title="来自 Kaggle 的本地 Gemma">
+        从 Kaggle 加载的本地 Gemma 模型。
+
+        ```python wrap
+        from langchain_google_vertexai.gemma import GemmaLocalKaggle
+        ```
+    </Accordion>
+    <Accordion title="Vertex AI Model Garden 上的 Gemma">
+        ```python wrap
+        from langchain_google_vertexai.gemma import GemmaVertexAIModelGarden
+        ```
+    </Accordion>
+    <Accordion title="Vertex AI 图像字幕">
+        作为 LLM 实现的图像字幕模型。
+
+        ```python wrap
+        from langchain_google_vertexai.vision_models import VertexAIImageCaptioning
+        ```
+    </Accordion>
+</AccordionGroup>
+
+### 嵌入模型
+
+<Columns cols={2}>
+    <Card title="Vertex AI" icon="layer-group" href="/oss/python/integrations/text_embedding/google_vertex_ai" cta="开始使用" arrow>
+        使用部署在 Vertex AI 上的模型生成嵌入。
+    </Card>
+</Columns>
+
+### 文档加载器
+
+从各种 Google Cloud 源加载文档。
+
+<Columns cols={2}>
+    <Card title="AlloyDB for PostgreSQL" href="/oss/python/integrations/document_loaders/google_alloydb" cta="开始使用" arrow>
+        Google Cloud AlloyDB 是一种完全托管的 PostgreSQL 兼容数据库服务。
+    </Card>
+    <Card title="BigQuery" href="/oss/python/integrations/document_loaders/google_bigquery" cta="开始使用" arrow>
+        Google Cloud BigQuery 是一个无服务器数据仓库。
+    </Card>
+    <Card title="Bigtable" href="/oss/python/integrations/document_loaders/google_bigtable" cta="开始使用" arrow>
+        Google Cloud Bigtable 是一种完全托管的 NoSQL 大数据数据库服务。
+    </Card>
+    <Card title="Cloud SQL for MySQL" href="/oss/python/integrations/document_loaders/google_cloud_sql_mysql" cta="开始使用" arrow>
+        Google Cloud SQL for MySQL 是一种完全托管的 MySQL 数据库服务。
+    </Card>
+    <Card title="Cloud SQL for SQL Server" href="/oss/python/integrations/document_loaders/google_cloud_sql_mssql" cta="开始使用" arrow>
+        Google Cloud SQL for SQL Server 是一种完全托管的 SQL Server 数据库服务。
+    </Card>
+    <Card title="Cloud SQL for PostgreSQL" href="/oss/python/integrations/document_loaders/google_cloud_sql_pg" cta="开始使用" arrow>
+        Google Cloud SQL for PostgreSQL 是一种完全托管的 PostgreSQL 数据库服务。
+    </Card>
+    <Card title="Cloud Storage (directory)" href="/oss/python/integrations/document_loaders/google_cloud_storage_directory" cta="开始使用" arrow>
+        Google Cloud Storage 是一种用于存储非结构化数据的托管服务。
+    </Card>
+    <Card title="Cloud Storage (file)" href="/oss/python/integrations/document_loaders/google_cloud_storage_file" cta="开始使用" arrow>
+        Google Cloud Storage 是一种用于存储非结构化数据的托管服务。
+    </Card>
+    <Card title="El Carro for Oracle Workloads" href="/oss/python/integrations/document_loaders/google_el_carro" cta="开始使用" arrow>
+        Google El Carro Oracle Operator 在 Kubernetes 中运行 Oracle 数据库。
+    </Card>
+    <Card title="Firestore (Native Mode)" href="/oss/python/integrations/document_loaders/google_firestore" cta="开始使用" arrow>
+        Google Cloud Firestore 是一个 NoSQL 文档数据库。
+    </Card>
+    <Card title="Firestore (Datastore Mode)" href="/oss/python/integrations/document_loaders/google_datastore" cta="开始使用" arrow>
+        Datastore 模式下的 Google Cloud Firestore
+    </Card>
+    <Card title="Memorystore for Redis" href="/oss/python/integrations/document_loaders/google_memorystore_redis" cta="开始使用" arrow>
+        Google Cloud Memorystore for Redis 是一种完全托管的 Redis 服务。
+    </Card>
+    <Card title="Spanner" href="/oss/python/integrations/document_loaders/google_spanner" cta="开始使用" arrow>
+        Google Cloud Spanner 是一种完全托管的、全球分布的关系数据库服务。
+    </Card>
+    <Card title="Speech-to-Text" href="/oss/python/integrations/document_loaders/google_speech_to_text" cta="开始使用" arrow>
+        Google Cloud Speech-to-Text 转录音频文件。
+    </Card>
+</Columns>
+
+<Card title="Cloud Vision 加载器">
+    使用 Google Cloud Vision API 加载数据。
+
+    ```python
+    from langchain_google_community.vision import CloudVisionLoader
+    ```
+</Card>
+
+### 文档转换器
+
+使用 Google Cloud 服务转换文档。
+
+<Columns cols={2}>
+    <Card title="Document AI" href="/oss/python/integrations/document_transformers/google_docai" cta="开始使用" arrow>
+        将文档中的非结构化数据转换为结构化数据，使其更易于理解、分析和使用。
+    </Card>
+    <Card title="Google Translate" href="/oss/python/integrations/document_transformers/google_translate" cta="开始使用" arrow>
+        使用 Google Cloud Translation API 翻译文本和 HTML。
+    </Card>
+</Columns>
+
+### 向量存储
+
+使用 Google Cloud 数据库和 Vertex AI Vector Search 存储和搜索向量。
+
+<Columns cols={2}>
+    <Card title="AlloyDB for PostgreSQL" href="/oss/python/integrations/vectorstores/google_alloydb" cta="开始使用" arrow>
+        Google Cloud AlloyDB 是一种完全托管的关系数据库服务，在 Google Cloud 上提供高性能、无缝集成和令人印象深刻的可扩展性。AlloyDB 与 PostgreSQL 100% 兼容。
+    </Card>
+    <Card title="BigQuery Vector Search" href="/oss/python/integrations/vectorstores/google_bigquery_vector_search" cta="开始使用" arrow>
+        BigQuery 向量搜索允许您使用 GoogleSQL 进行语义搜索，使用向量索引获得快速但近似的结果，或使用暴力破解获得精确结果。
+    </Card>
+    <Card title="Memorystore for Redis" href="/oss/python/integrations/vectorstores/google_memorystore_redis" cta="开始使用" arrow>
+        使用 Memorystore for Redis 的向量存储
+    </Card>
+    <Card title="Spanner" href="/oss/python/integrations/vectorstores/google_spanner" cta="开始使用" arrow>
+        使用 Cloud Spanner 的向量存储
+    </Card>
+    <Card title="Firestore (Native Mode)" href="/oss/python/integrations/vectorstores/google_firestore" cta="开始使用" arrow>
+        使用 Firestore 的向量存储
+    </Card>
+    <Card title="Cloud SQL for MySQL" href="/oss/python/integrations/vectorstores/google_cloud_sql_mysql" cta="开始使用" arrow>
+        使用 Cloud SQL for MySQL 的向量存储
+    </Card>
+    <Card title="Cloud SQL for PostgreSQL" href="/oss/python/integrations/vectorstores/google_cloud_sql_pg" cta="开始使用" arrow>
+        使用 Cloud SQL for PostgreSQL 的向量存储。
+    </Card>
+    <Card title="Vertex AI Vector Search" href="/oss/python/integrations/vectorstores/google_vertex_ai_vector_search" cta="开始使用" arrow>
+        前身为 Vertex AI Matching Engine，提供低延迟向量数据库。这些向量数据库通常被称为向量相似性匹配或近似最近邻 (ANN) 服务。
+    </Card>
+    <Card title="使用 DataStore 后端" href="/oss/python/integrations/vectorstores/google_vertex_ai_vector_search/#optional--you-can-also-create-vectore-and-store-chunks-in-a-datastore" cta="开始使用" arrow>
+        使用 Datastore 进行文档存储的向量搜索。
+    </Card>
+</Columns>
+
+### 检索器
+
+使用 Google Cloud 服务检索信息。
+
+<Columns cols={2}>
+    <Card title="Vertex AI Search" icon="magnifying-glass" href="/oss/python/integrations/retrievers/google_vertex_ai_search" cta="开始使用" arrow>
+        使用 Vertex AI Search 构建生成式 AI 驱动的搜索引擎
+    </Card>
+    <Card title="Document AI Warehouse" icon="warehouse" href="https://cloud.google.com/document-ai-warehouse" cta="开始使用" arrow>
+        使用 Document AI Warehouse 搜索、存储和管理文档。
+    </Card>
+</Columns>
+
+```python Other retrievers
+from langchain_google_community import VertexAIMultiTurnSearchRetriever
+from langchain_google_community import VertexAISearchRetriever
+from langchain_google_community import VertexAISearchSummaryTool
+```
+
+### 工具
+
+将智能体与各种 Google Cloud 服务集成。
+
+<Columns cols={2}>
+    <Card title="Text-to-Speech" icon="volume-high" href="/oss/python/integrations/tools/google_cloud_texttospeech" cta="开始使用" arrow>
+        Google Cloud Text-to-Speech 使用多种语言的 100 多种语音合成听起来自然的语音。
+    </Card>
+</Columns>
+
+### 回调
+
+跟踪 LLM/聊天模型的使用情况。
+
+<AccordionGroup>
+    <Accordion title="Vertex AI 回调处理程序">
+        跟踪 `VertexAI` 使用情况信息的回调处理程序。
+
+        ```python wrap
+        from langchain_google_vertexai.callbacks import VertexAICallbackHandler
+        ```
+    </Accordion>
+</AccordionGroup>
+
+### 评估器
+
+使用 Vertex AI 评估模型输出。
+
+<AccordionGroup>
+    <Accordion title="VertexPairWiseStringEvaluator">
+        使用 Vertex AI 模型进行成对评估。
+
+        ```python wrap
+        from langchain_google_vertexai.evaluators.evaluation import VertexPairWiseStringEvaluator
+        ```
+    </Accordion>
+    <Accordion title="VertexStringEvaluator">
+        使用 Vertex AI 模型评估单个预测字符串。
+
+        ```python wrap
+        from langchain_google_vertexai.evaluators.evaluation import VertexStringEvaluator
+        ```
+    </Accordion>
+</AccordionGroup>
+
+---
+
+## 其他 Google 产品
+
+与核心云平台之外的各种 Google 服务的集成。
+
+### 文档加载器
+
+<Columns cols={1}>
+    <Card title="Google Drive" href="/oss/python/integrations/document_loaders/google_drive" cta="开始使用" arrow>
+        Google Drive 文件存储。目前支持 Google Docs。
+    </Card>
+</Columns>
+
+### 向量存储
+
+<Columns cols={1}>
+    <Card title="ScaNN (Local Index)" href="/oss/python/integrations/vectorstores/scann" cta="开始使用" arrow>
+        ScaNN 是一种大规模高效向量相似性搜索的方法。
+    </Card>
+</Columns>
+
+### 检索器
+
+<Columns cols={1}>
+    <Card title="Google Drive" href="/oss/python/integrations/retrievers/google_drive" cta="开始使用" arrow>
+        从 Google Drive 检索文档。
+    </Card>
+</Columns>
+
+### 工具
+
+<Columns cols={2}>
+    <Card title="Google Search" href="/oss/python/integrations/tools/google_search" cta="开始使用" arrow>
+        使用 Google 自定义搜索引擎 (CSE) 执行网络搜索。
+    </Card>
+    <Card title="Google Drive" href="/oss/python/integrations/tools/google_drive" cta="开始使用" arrow>
+        用于与 Google Drive 交互的工具。
+    </Card>
+    <Card title="Google Finance" href="/oss/python/integrations/tools/google_finance" cta="开始使用" arrow>
+        查询财务数据。
+    </Card>
+    <Card title="Google Jobs" href="/oss/python/integrations/tools/google_jobs" cta="开始使用" arrow>
+        查询职位列表。
+    </Card>
+    <Card title="Google Lens" href="/oss/python/integrations/tools/google_lens" cta="开始使用" arrow>
+        执行视觉搜索。
+    </Card>
+    <Card title="Google Places" href="/oss/python/integrations/tools/google_places" cta="开始使用" arrow>
+        搜索地点信息。
+    </Card>
+    <Card title="Google Scholar" href="/oss/python/integrations/tools/google_scholar" cta="开始使用" arrow>
+        搜索学术论文。
+    </Card>
+    <Card title="Google Trends" href="/oss/python/integrations/tools/google_trends" cta="开始使用" arrow>
+        查询 Google Trends 数据。
+    </Card>
+</Columns>
+
+### MCP
+
+<Columns cols={1}>
+    <Card title="MCP Toolbox" href="/oss/python/integrations/tools/toolbox" cta="开始使用" arrow>
+        连接数据库（包括 Cloud SQL 和 AlloyDB 等 Google Cloud 上的数据库）的简单高效方式
+    </Card>
+</Columns>
+
+### 工具包
+
+用于特定 Google 服务的工具集合。
+
+<Columns cols={2}>
+    <Card title="Gmail" icon="envelope" href="/oss/python/integrations/tools/gmail" cta="开始使用" arrow>
+        使用 Gmail API 创建、获取、搜索和发送电子邮件的工具包。
+    </Card>
+</Columns>
+
+### 聊天加载器
+
+<Columns cols={2}>
+    <Card title="Gmail" icon="envelope" href="/oss/python/integrations/chat_loaders/gmail" cta="开始使用" arrow>
+        从 Gmail 线程加载聊天记录。
+    </Card>
+</Columns>
+
+---
+
+## 第三方集成
+
+通过非官方第三方 API 访问 Google 服务。
+
+### 搜索
+
+<Columns cols={2}>
+    <Card title="SearchApi" icon="magnifying-glass" href="/oss/python/integrations/tools/searchapi" cta="开始使用" arrow>
+        searchapi.io 提供对 Google 搜索结果、YouTube 等的 API 访问。
+    </Card>
+    <Card title="SerpApi" icon="magnifying-glass" href="/oss/python/integrations/tools/serpapi" cta="开始使用" arrow>
+        SerpApi 提供对 Google 搜索结果的 API 访问。
+    </Card>
+    <Card title="Serper.dev" icon="magnifying-glass" href="/oss/python/integrations/tools/google_serper" cta="开始使用" arrow>
+        serper.dev 提供对 Google 搜索结果的 API 访问。
+    </Card>
+</Columns>
+
+### YouTube
+
+<Columns cols={2}>
+    <Card title="Search tool" icon="youtube" href="/oss/python/integrations/tools/youtube" cta="开始使用" arrow>
+        无需官方 API 即可搜索 YouTube 视频。
+    </Card>
+    <Card title="Audio loader" icon="youtube" href="/oss/python/integrations/document_loaders/youtube_audio" cta="开始使用" arrow>
+        从 YouTube 视频下载音频。
+    </Card>
+    <Card title="Transcripts loader" icon="youtube" href="/oss/python/integrations/document_loaders/youtube_transcript" cta="开始使用" arrow>
+        加载视频转录。
+    </Card>
+</Columns>
+
+---
+
+<Callout icon="pen-to-square" iconType="regular">
+    [Edit the source of this page on GitHub.](https://github.com/langchain-ai/docs/edit/main/src/oss\python\integrations\providers\google.mdx)
+</Callout>
+<Tip icon="terminal" iconType="regular">
+    [Connect these docs programmatically](/use-these-docs) to Claude, VSCode, and more via MCP for real-time answers.
+</Tip>

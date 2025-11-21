@@ -1,0 +1,176 @@
+---
+title: 运行本地服务器
+sidebarTitle: 本地服务器
+---
+
+
+
+本指南向您展示如何在本地运行 LangGraph 应用程序。
+
+## 先决条件
+
+在开始之前，请确保您具备以下条件：
+
+* [LangSmith](https://smith.langchain.com/settings) 的 API 密钥 - 免费注册
+
+## 1. 安装 LangGraph CLI
+
+
+
+```shell
+npx @langchain/langgraph-cli
+```
+
+
+## 2. 创建 LangGraph 应用 🌱
+
+
+
+从 [`new-langgraph-project-js` 模板](https://github.com/langchain-ai/new-langgraphjs-project) 创建新应用。此模板演示了一个单节点应用程序，您可以使用自己的逻辑扩展它。
+
+```shell
+npm create langgraph
+```
+
+
+## 3. 安装依赖项
+
+在新 LangGraph 应用的根目录中，以 `edit` 模式安装依赖项，以便服务器使用您的本地更改：
+
+
+
+```shell
+cd path/to/your/app
+npm install
+```
+
+
+## 4. 创建 `.env` 文件
+
+您会在新 LangGraph 应用的根目录中找到 `.env.example` 文件。在新 LangGraph 应用的根目录中创建 `.env` 文件，并将 `.env.example` 文件的内容复制到其中，填写必要的 API 密钥：
+
+```bash
+LANGSMITH_API_KEY=lsv2...
+```
+
+## 5. 启动代理服务器 🚀
+
+在本地启动 LangGraph API 服务器：
+
+
+
+```shell
+npx @langchain/langgraph-cli dev
+```
+
+
+示例输出：
+
+```
+>    Ready!
+>
+>    - API: [http://localhost:2024](http://localhost:2024/)
+>
+>    - Docs: http://localhost:2024/docs
+>
+>    - LangGraph Studio Web UI: https://smith.langchain.com/studio/?baseUrl=http://127.0.0.1:2024
+```
+
+`langgraph dev` 命令以内存模式启动代理服务器。此模式适用于开发和测试目的。对于生产使用，请部署具有持久存储后端访问权限的代理服务器。有关更多信息，请参阅[平台设置概述](/langsmith/platform-setup)。
+
+## 6. 在 Studio 中测试您的应用程序
+
+[Studio](/langsmith/studio) 是一个专门的 UI，您可以将其连接到 LangGraph API 服务器，以在本地可视化、交互和调试您的应用程序。通过访问 `langgraph dev` 命令输出中提供的 URL 在 Studio 中测试您的图：
+
+```
+>    - LangGraph Studio Web UI: https://smith.langchain.com/studio/?baseUrl=http://127.0.0.1:2024
+```
+
+对于在自定义主机/端口上运行的代理服务器，请更新 baseURL 参数。
+
+<Accordion title="Safari 兼容性">
+  在命令中使用 `--tunnel` 标志创建安全隧道，因为 Safari 在连接到 localhost 服务器时有局限性：
+
+  ```shell
+  langgraph dev --tunnel
+  ```
+</Accordion>
+
+## 7. 测试 API
+
+
+
+<Tabs>
+    <Tab title="Javascript SDK">
+    1. 安装 LangGraph JS SDK：
+      ```shell
+      npm install @langchain/langgraph-sdk
+      ```
+    2. 向助手发送消息（无线程运行）：
+      ```js
+      const { Client } = await import("@langchain/langgraph-sdk");
+
+      // only set the apiUrl if you changed the default port when calling langgraph dev
+      const client = new Client({ apiUrl: "http://localhost:2024"});
+
+      const streamResponse = client.runs.stream(
+          null, // Threadless run
+          "agent", // Assistant ID
+          {
+              input: {
+                  "messages": [
+                      { "role": "user", "content": "What is LangGraph?"}
+                  ]
+              },
+              streamMode: "messages-tuple",
+          }
+      );
+
+      for await (const chunk of streamResponse) {
+          console.log(`Receiving new event of type: ${chunk.event}...`);
+          console.log(JSON.stringify(chunk.data));
+          console.log("\n\n");
+      }
+      ```
+    </Tab>
+    <Tab title="Rest API">
+    ```bash
+    curl -s --request POST \
+        --url "http://localhost:2024/runs/stream" \
+        --header 'Content-Type: application/json' \
+        --data "{
+            \"assistant_id\": \"agent\",
+            \"input\": {
+                \"messages\": [
+                    {
+                        \"role\": \"human\",
+                        \"content\": \"What is LangGraph?\"
+                    }
+                ]
+            },
+            \"stream_mode\": \"messages-tuple\"
+        }"
+    ```
+    </Tab>
+</Tabs>
+
+
+## 后续步骤
+
+现在您已经在本地运行了 LangGraph 应用，通过探索部署和高级功能来进一步推进您的旅程：
+
+* [部署快速开始](/langsmith/deployment-quickstart)：使用 LangSmith 部署您的 LangGraph 应用。
+* [LangSmith](/langsmith/home)：了解 LangSmith 的基础概念。
+
+
+
+* [JS/TS SDK 参考](https://reference.langchain.com/javascript/modules/_langchain_langgraph-sdk.html)：探索 JS/TS SDK API 参考。
+
+---
+
+<Callout icon="pen-to-square" iconType="regular">
+    [Edit the source of this page on GitHub.](https://github.com/langchain-ai/docs/edit/main/src/oss\langgraph\local-server.mdx)
+</Callout>
+<Tip icon="terminal" iconType="regular">
+    [Connect these docs programmatically](/use-these-docs) to Claude, VSCode, and more via MCP for real-time answers.
+</Tip>

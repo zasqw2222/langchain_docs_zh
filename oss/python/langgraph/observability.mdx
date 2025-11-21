@@ -1,0 +1,68 @@
+---
+title: 可观测性
+---
+
+import observability from '/snippets/oss/observability.mdx';
+
+
+跟踪是应用程序从输入到输出所执行的一系列步骤。每个单独的步骤都由一个运行表示。您可以使用 [LangSmith](https://smith.langchain.com/) 可视化这些执行步骤。要使用它，请[为您的应用程序启用跟踪](/langsmith/trace-with-langgraph)。这使您能够执行以下操作：
+
+* [调试本地运行的应用程序](/langsmith/observability-studio#debug-langsmith-traces)。
+* [评估应用程序性能](/oss/python/langchain/evals)。
+* [监控应用程序](/langsmith/dashboards)。
+
+## 先决条件
+
+在开始之前，请确保您具备以下条件：
+
+* [LangSmith 账户](https://smith.langchain.com/)（免费注册）
+
+## 启用跟踪
+
+要为您的应用程序启用跟踪，请设置以下环境变量：
+
+```python
+export LANGSMITH_TRACING=true
+export LANGSMITH_API_KEY=<your-api-key>
+```
+
+默认情况下，跟踪将记录到名为 `default` 的项目中。要配置自定义项目名称，请参阅[记录到项目](#log-to-a-project)。
+
+有关更多信息，请参阅[使用 LangGraph 进行跟踪](/langsmith/trace-with-langgraph)。
+
+<observability />
+
+## 使用匿名器防止在跟踪中记录敏感数据
+
+您可能希望屏蔽敏感数据以防止其被记录到 LangSmith。您可以创建[匿名器](/langsmith/mask-inputs-outputs#rule-based-masking-of-inputs-and-outputs)并使用配置将它们应用到您的图。此示例将从发送到 LangSmith 的跟踪中编辑任何匹配社会保障号格式 XXX-XX-XXXX 的内容。
+
+```python Python
+from langchain_core.tracers.langchain import LangChainTracer
+from langgraph.graph import StateGraph, MessagesState
+from langsmith import Client
+from langsmith.anonymizer import create_anonymizer
+
+anonymizer = create_anonymizer([
+    # 匹配社会保障号
+    { "pattern": r"\b\d{3}-?\d{2}-?\d{4}\b", "replace": "<ssn>" }
+])
+
+tracer_client = Client(anonymizer=anonymizer)
+tracer = LangChainTracer(client=tracer_client)
+# 定义图
+graph = (
+    StateGraph(MessagesState)
+    ...
+    .compile()
+    .with_config({'callbacks': [tracer]})
+)
+```
+
+---
+
+<Callout icon="pen-to-square" iconType="regular">
+    [Edit the source of this page on GitHub.](https://github.com/langchain-ai/docs/edit/main/src/oss\langgraph\observability.mdx)
+</Callout>
+<Tip icon="terminal" iconType="regular">
+    [Connect these docs programmatically](/use-these-docs) to Claude, VSCode, and more via MCP for real-time answers.
+</Tip>

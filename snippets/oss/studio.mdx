@@ -1,0 +1,145 @@
+本指南将引导您如何使用 **Studio** 在本地可视化、交互和调试您的代理。
+
+Studio 是我们免费使用的强大代理 IDE，它与 [LangSmith](/langsmith/home) 集成，支持跟踪、评估和提示工程。准确查看您的代理如何思考，跟踪每个决策，并构建更智能、更可靠的代理。
+
+<Frame>
+<iframe
+  className="w-full aspect-video rounded-xl"
+  src="https://www.youtube.com/embed/Mi1gSlHwZLM?si=zA47TNuTC5aH0ahd"
+  title="Studio"
+  frameBorder="0"
+  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+  allowFullScreen
+></iframe>
+</Frame>
+
+## 先决条件
+
+在开始之前，请确保您具备以下条件：
+* [LangSmith](https://smith.langchain.com/settings) 的 API 密钥（免费注册）
+
+## 设置本地代理服务器
+
+### 1. 安装 LangGraph CLI
+
+```shell
+# Python >= 3.11 is required.
+pip install --upgrade "langgraph-cli[inmem]"
+```
+
+
+
+
+### 2. 准备您的代理
+
+我们将使用以下简单代理作为示例：
+
+```python title="agent.py"
+from langchain.agents import create_agent
+
+def send_email(to: str, subject: str, body: str):
+    """Send an email"""
+    email = {
+        "to": to,
+        "subject": subject,
+        "body": body
+    }
+    # ... email sending logic
+
+    return f"Email sent to {to}"
+
+agent = create_agent(
+    "gpt-4o",
+    tools=[send_email],
+    system_prompt="You are an email assistant. Always use the send_email tool.",
+)
+```
+
+### 3. 环境变量
+
+在项目根目录创建一个 `.env` 文件，并填写必要的 API 密钥。我们需要将 `LANGSMITH_API_KEY` 环境变量设置为您从 [LangSmith](https://smith.langchain.com/settings) 获取的 API 密钥。
+
+<Warning>
+    请确保不要将您的 `.env` 提交到版本控制系统（如 Git）！
+</Warning>
+
+```bash .env
+LANGSMITH_API_KEY=lsv2...
+```
+
+### 4. 创建 LangGraph 配置文件
+
+在您的应用目录中，创建一个配置文件 `langgraph.json`：
+
+```json title="langgraph.json"
+{
+  "dependencies": ["."],
+  "graphs": {
+    "agent": "./src/agent.py:agent"
+  },
+  "env": ".env"
+}
+```
+
+[`create_agent`](https://reference.langchain.com/python/langchain/agents/#langchain.agents.create_agent) 自动返回一个编译的 LangGraph 图，我们可以将其传递给配置文件中的 `graphs` 键。
+
+<Info>
+有关配置文件中 JSON 对象每个键的详细说明，请参阅 [LangGraph 配置文件参考](/langsmith/cli#configuration-file)。
+</Info>
+
+到目前为止，我们的项目结构如下：
+
+```bash
+my-app/
+├── src
+│   └── agent.py
+├── .env
+└── langgraph.json
+```
+
+### 5. 安装依赖
+
+在您的新 LangGraph 应用的根目录中，安装依赖：
+
+<CodeGroup>
+```shell pip
+pip install -e .
+```
+```shell uv
+uv sync
+```
+</CodeGroup>
+
+
+
+
+### 6. 在 Studio 中查看您的代理
+
+启动您的代理服务器：
+
+```shell
+langgraph dev
+```
+
+
+
+
+<Warning>
+Safari 会阻止到 Studio 的 `localhost` 连接。要解决此问题，请使用 `--tunnel` 运行上述命令，通过安全隧道访问 Studio。
+</Warning>
+
+您的代理可通过 API (`http://127.0.0.1:2024`) 和 Studio UI `https://smith.langchain.com/studio/?baseUrl=http://127.0.0.1:2024` 访问：
+
+<Frame>
+![Agent view in the Studio UI](/oss/images/studio_create-agent.png)
+</Frame>
+
+Studio 使您的代理的每个步骤都易于观察。重放任何输入并检查确切的提示、工具参数、返回值和令牌/延迟指标。如果工具抛出异常，Studio 会记录其周围状态，从而减少您的调试时间。
+
+保持开发服务器运行，编辑提示或工具签名，并观察 Studio 热重载。从任何步骤重新运行对话线程以验证行为更改。有关更多详细信息，请参阅[管理线程](/langsmith/use-studio#edit-thread-history)。
+
+随着您的代理增长，同一视图可以从单工具演示扩展到多节点图，保持决策清晰且可重现。
+
+<Tip>
+要深入了解 Studio，请查看[概述页面](/langsmith/studio)。
+</Tip>

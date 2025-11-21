@@ -1,0 +1,276 @@
+---
+title: 长期内存
+description: 了解如何为深度代理扩展跨线程的持久化内存
+---
+
+深度代理附带一个本地文件系统来卸载内存。默认情况下，此文件系统存储在代理状态中，并且**对单个线程是临时的**——文件在对话结束时丢失。
+
+您可以通过使用将特定路径路由到持久化存储的 **CompositeBackend** 来扩展深度代理的**长期内存**。这支持混合存储，其中某些文件跨线程持久化，而其他文件保持临时。
+
+## 设置
+
+通过使用将 `/memories/` 路径路由到 `StoreBackend` 的 `CompositeBackend` 来配置长期内存：
+
+```python
+from deepagents import create_deep_agent
+from deepagents.backends import CompositeBackend, StateBackend, StoreBackend
+from langgraph.store.memory import InMemoryStore
+
+def make_backend(runtime):
+    return CompositeBackend(
+        default=StateBackend(runtime),  # Ephemeral storage
+        routes={
+            "/memories/": StoreBackend(runtime)  # Persistent storage
+        }
+    )
+
+agent = create_deep_agent(
+    store=InMemoryStore(),  # StoreBackend 必需
+    backend=make_backend
+)
+```
+
+
+
+
+## 工作原理
+
+使用 `CompositeBackend` 时，深度代理维护**两个独立的文件系统**：
+
+### 1. 短期（临时）文件系统
+- 存储在代理状态中（通过 `StateBackend`）
+- 仅在单个线程内持久化
+- 线程结束时文件丢失
+- 通过标准路径访问：`/notes.txt`、`/workspace/draft.md`
+
+### 2. 长期（持久化）文件系统
+- 存储在 LangGraph Store 中（通过 `StoreBackend`）
+- 在所有线程和对话之间持久化
+- 在代理重启后仍然存在
+- 通过以 `/memories/` 为前缀的路径访问：`/memories/preferences.txt`
+
+### 路径路由
+
+`CompositeBackend` 根据路径前缀路由文件操作：
+- 以 `/memories/` 开头的路径的文件存储在 Store 中（持久化）
+- 没有此前缀的文件保留在临时状态中
+- 所有文件系统工具（`ls`、`read_file`、`write_file`、`edit_file`）都适用于两者
+
+```python
+# 临时文件（线程结束后丢失）
+agent.invoke({
+    "messages": [{"role": "user", "content": "Write draft to /draft.txt"}]
+})
+
+# 持久化文件（跨线程存活）
+agent.invoke({
+    "messages": [{"role": "user", "content": "Save final report to /memories/report.txt"}]
+})
+```
+
+
+
+
+## 跨线程持久化
+
+`/memories/` 中的文件可以从任何线程访问：
+
+```python
+import uuid
+
+# 线程 1：写入长期内存
+config1 = {"configurable": {"thread_id": str(uuid.uuid4())}}
+agent.invoke({
+    "messages": [{"role": "user", "content": "Save my preferences to /memories/preferences.txt"}]
+}, config=config1)
+
+# 线程 2：从长期内存读取（不同的对话！）
+config2 = {"configurable": {"thread_id": str(uuid.uuid4())}}
+agent.invoke({
+    "messages": [{"role": "user", "content": "What are my preferences?"}]
+}, config=config2)
+# 代理可以从第一个线程读取 /memories/preferences.txt
+```
+
+
+
+
+## 用例
+
+### 用户偏好
+
+存储跨会话持久化的用户偏好：
+
+```python
+agent = create_deep_agent(
+    store=InMemoryStore(),
+    backend=lambda rt: CompositeBackend(
+        default=StateBackend(rt),
+        routes={"/memories/": StoreBackend(rt)}
+    ),
+    system_prompt="""当用户告诉您他们的偏好时，将它们保存到
+    /memories/user_preferences.txt 中，以便您在未来的对话中记住它们。"""
+)
+```
+
+
+
+
+### 自我改进指令
+
+代理可以根据反馈更新自己的指令：
+
+```python
+agent = create_deep_agent(
+    store=InMemoryStore(),
+    backend=lambda rt: CompositeBackend(
+        default=StateBackend(rt),
+        routes={"/memories/": StoreBackend(rt)}
+    ),
+    system_prompt="""您在 /memories/instructions.txt 有一个包含其他
+    指令和偏好的文件。
+
+    在对话开始时读取此文件以了解用户偏好。
+
+    当用户提供反馈，如"请始终执行 X"或"我偏好 Y"时，
+    使用 edit_file 工具更新 /memories/instructions.txt。"""
+)
+```
+
+
+
+
+随着时间的推移，指令文件会积累用户偏好，帮助代理改进。
+
+### 知识库
+
+在多次对话中积累知识：
+
+```python
+# 对话 1：了解项目
+agent.invoke({
+    "messages": [{"role": "user", "content": "We're building a web app with React. Save project notes."}]
+})
+
+# 对话 2：使用该知识
+agent.invoke({
+    "messages": [{"role": "user", "content": "What framework are we using?"}]
+})
+# 代理从之前的对话读取 /memories/project_notes.txt
+```
+
+
+
+
+### 研究项目
+
+在会话之间维护研究状态：
+
+```python
+research_agent = create_deep_agent(
+    store=InMemoryStore(),
+    backend=lambda rt: CompositeBackend(
+        default=StateBackend(rt),
+        routes={"/memories/": StoreBackend(rt)}
+    ),
+    system_prompt="""您是一名研究助手。
+
+    将您的研究进度保存到 /memories/research/：
+    - /memories/research/sources.txt - 找到的来源列表
+    - /memories/research/notes.txt - 关键发现和笔记
+    - /memories/research/report.md - 最终报告草稿
+
+    这允许研究在多个会话之间继续。"""
+)
+```
+
+
+
+
+## 存储实现
+
+任何 LangGraph `BaseStore` 实现都可以使用：
+
+### InMemoryStore（开发）
+
+适用于测试和开发，但重启时数据会丢失：
+
+```python
+from langgraph.store.memory import InMemoryStore
+
+store = InMemoryStore()
+agent = create_deep_agent(
+    store=store,
+    backend=lambda rt: CompositeBackend(
+        default=StateBackend(rt),
+        routes={"/memories/": StoreBackend(rt)}
+    )
+)
+```
+
+
+
+
+### PostgresStore（生产）
+
+对于生产环境，使用持久化存储：
+
+```python
+from langgraph.store.postgres import PostgresStore
+import os
+
+store = PostgresStore(connection_string=os.environ["DATABASE_URL"])
+agent = create_deep_agent(
+    store=store,
+    backend=lambda rt: CompositeBackend(
+        default=StateBackend(rt),
+        routes={"/memories/": StoreBackend(rt)}
+    )
+)
+```
+
+
+
+
+## 最佳实践
+
+### 使用描述性路径
+
+使用清晰的路径组织持久化文件：
+
+```
+/memories/user_preferences.txt
+/memories/research/topic_a/sources.txt
+/memories/research/topic_a/notes.txt
+/memories/project/requirements.md
+```
+
+### 记录内存结构
+
+在系统提示中告诉代理存储位置：
+
+```
+您的持久化内存结构：
+- /memories/preferences.txt: 用户偏好和设置
+- /memories/context/: 关于用户的长期上下文
+- /memories/knowledge/: 随着时间的推移学到的事实和信息
+```
+
+### 清理旧数据
+
+实现定期清理过时的持久化文件，以保持存储可管理。
+
+### 选择正确的存储
+
+- **开发**：使用 `InMemoryStore` 进行快速迭代
+- **生产**：使用 `PostgresStore` 或其他持久化存储
+- **多租户**：考虑在存储中使用基于 assistant_id 的命名空间
+
+---
+
+<Callout icon="pen-to-square" iconType="regular">
+    [Edit the source of this page on GitHub.](https://github.com/langchain-ai/docs/edit/main/src/oss\deepagents\long-term-memory.mdx)
+</Callout>
+<Tip icon="terminal" iconType="regular">
+    [Connect these docs programmatically](/use-these-docs) to Claude, VSCode, and more via MCP for real-time answers.
+</Tip>

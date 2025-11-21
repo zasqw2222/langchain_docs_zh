@@ -1,0 +1,157 @@
+---
+title: 快速开始
+description: 在几分钟内构建您的第一个深度代理
+---
+
+本指南将引导您创建一个具有规划、文件系统工具和子代理功能的第一个深度代理。您将构建一个可以进行研究并撰写报告的研究代理。
+
+## 先决条件
+
+在开始之前，请确保您有来自模型提供商的 API 密钥（例如，Anthropic、OpenAI）。
+
+### 步骤 1：安装依赖项
+
+
+
+<CodeGroup>
+    ```bash npm
+    npm install deepagents @langchain/tavily
+    ```
+
+    ```bash yarn
+    yarn add deepagents @langchain/tavily
+    ```
+
+    ```bash pnpm
+    pnpm add deepagents @langchain/tavily
+    ```
+</CodeGroup>
+
+
+### 步骤 2：设置您的 API 密钥
+
+```bash
+export ANTHROPIC_API_KEY="your-api-key"
+export TAVILY_API_KEY="your-tavily-api-key"
+```
+
+### 步骤 3：创建搜索工具
+
+
+
+```typescript
+import { tool } from "langchain";
+import { TavilySearch } from "@langchain/tavily";
+import { z } from "zod";
+
+const internetSearch = tool(
+  async ({
+    query,
+    maxResults = 5,
+    topic = "general",
+    includeRawContent = false,
+  }: {
+    query: string;
+    maxResults?: number;
+    topic?: "general" | "news" | "finance";
+    includeRawContent?: boolean;
+  }) => {
+    const tavilySearch = new TavilySearch({
+      maxResults,
+      tavilyApiKey: process.env.TAVILY_API_KEY,
+      includeRawContent,
+      topic,
+    });
+    return await tavilySearch._call({ query });
+  },
+  {
+    name: "internet_search",
+    description: "Run a web search",
+    schema: z.object({
+      query: z.string().describe("The search query"),
+      maxResults: z
+        .number()
+        .optional()
+        .default(5)
+        .describe("Maximum number of results to return"),
+      topic: z
+        .enum(["general", "news", "finance"])
+        .optional()
+        .default("general")
+        .describe("Search topic category"),
+      includeRawContent: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe("Whether to include raw content"),
+    }),
+  },
+);
+```
+
+
+### 步骤 4：创建深度代理
+
+
+
+```typescript
+import { createDeepAgent } from "deepagents";
+
+// 系统提示，引导代理成为专家研究员
+const researchInstructions = `您是一名专家研究员。您的工作是进行深入研究，然后撰写一份精美的报告。
+
+您可以访问网络搜索工具作为收集信息的主要方式。
+
+## \`internet_search\`
+
+使用此工具对给定查询运行网络搜索。您可以指定要返回的最大结果数、主题以及是否应包含原始内容。
+`;
+
+const agent = createDeepAgent({
+  tools: [internetSearch],
+  systemPrompt: researchInstructions,
+});
+```
+
+
+### 步骤 5：运行代理
+
+
+
+```typescript
+const result = await agent.invoke({
+  messages: [{ role: "user", content: "What is langgraph?" }],
+});
+
+// 打印代理的响应
+console.log(result.messages[result.messages.length - 1].content);
+```
+
+
+## 发生了什么？
+
+您的深度代理自动：
+
+1. **规划方法**：使用内置的 `write_todos` 工具分解研究任务
+2. **进行研究**：调用 `internet_search` 工具收集信息
+3. **管理上下文**：使用文件系统工具（`write_file`、`read_file`）卸载大型搜索结果
+4. **生成子代理**（如果需要）：将复杂的子任务委托给专业子代理
+5. **综合报告**：将发现编译成连贯的响应
+
+## 下一步
+
+现在您已经构建了第一个深度代理：
+
+- **自定义您的代理**：了解[自定义选项](/oss/javascript/deepagents/customization)，包括自定义系统提示、工具和子代理。
+- **了解中间件**：深入了解驱动深度代理的[中间件架构](/oss/javascript/deepagents/middleware)。
+- **添加长期内存**：启用跨对话的[持久化内存](/oss/javascript/deepagents/long-term-memory)。
+- **部署到生产环境**：了解 LangGraph 应用程序的[部署选项](/oss/javascript/langgraph/deploy)。
+
+---
+
+<Callout icon="pen-to-square" iconType="regular">
+    [Edit the source of this page on GitHub.](https://github.com/langchain-ai/docs/edit/main/src/oss\deepagents\quickstart.mdx)
+</Callout>
+<Tip icon="terminal" iconType="regular">
+    [Connect these docs programmatically](/use-these-docs) to Claude, VSCode, and more via MCP for real-time answers.
+</Tip>

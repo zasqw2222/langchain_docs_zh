@@ -1,0 +1,174 @@
+---
+title: 运行时
+---
+
+
+
+
+## 概述
+
+
+LangChain 的 `createAgent` 在底层运行在 LangGraph 的运行时上。
+
+LangGraph 公开一个 [`Runtime`](https://reference.langchain.com/javascript/modules/langgraph.index.Runtime.html) 对象，包含以下信息：
+
+1. **上下文**：静态信息，如用户 ID、数据库连接或代理调用的其他依赖项
+2. **存储**：用于[长期记忆](/oss/javascript/langchain/long-term-memory)的 [BaseStore](https://langchain-ai.github.io/langgraphjs/reference/classes/checkpoint.BaseStore.html) 实例
+3. **流写入器**：用于通过 `"custom"` 流模式流式传输信息的对象
+
+
+
+<Tip>
+运行时上下文是您在线程数据通过代理的方式。您可以将值（如数据库连接、用户会话或配置）附加到上下文，并在工具和中间件内部访问它们，而不是将内容存储在全局状态中。这使事物保持无状态、可测试和可重用。
+</Tip>
+
+
+您可以在[工具](#inside-tools)和[中间件](#inside-middleware)中访问运行时信息。
+
+## 访问
+
+
+使用 `createAgent` 创建代理时，您可以指定 `contextSchema` 来定义存储在代理 [`Runtime`](https://reference.langchain.com/javascript/modules/langgraph.index.Runtime.html) 中的 `context` 的结构。
+
+
+调用代理时，传递带有运行相关配置的 `context` 参数：
+
+
+```ts
+import * as z from "zod";
+import { createAgent } from "langchain";
+
+const contextSchema = z.object({ // [!code highlight]
+  userName: z.string(), // [!code highlight]
+}); // [!code highlight]
+
+const agent = createAgent({
+  model: "gpt-4o",
+  tools: [
+    /* ... */
+  ],
+  contextSchema, // [!code highlight]
+});
+
+const result = await agent.invoke(
+  { messages: [{ role: "user", content: "What's my name?" }] },
+  { context: { userName: "John Smith" } } // [!code highlight]
+);
+```
+
+
+### 在工具内部
+
+您可以在工具内部访问运行时信息以：
+
+* 访问上下文
+* 读取或写入长期记忆
+* 写入[自定义流](/oss/javascript/langchain/streaming#custom-updates)（例如，工具进度/更新）
+
+
+使用 `runtime` 参数在工具内部访问 [`Runtime`](https://reference.langchain.com/javascript/modules/langgraph.index.Runtime.html) 对象。
+
+```ts
+import * as z from "zod";
+import { tool } from "langchain";
+import { type ToolRuntime } from "@langchain/core/tools"; // [!code highlight]
+
+const contextSchema = z.object({
+  userName: z.string(),
+});
+
+const fetchUserEmailPreferences = tool(
+  async (_, runtime: ToolRuntime<any, typeof contextSchema>) => { // [!code highlight]
+    const userName = runtime.context?.userName; // [!code highlight]
+    if (!userName) {
+      throw new Error("userName is required");
+    }
+
+    let preferences = "The user prefers you to write a brief and polite email.";
+    if (runtime.store) { // [!code highlight]
+      const memory = await runtime.store?.get(["users"], userName); // [!code highlight]
+      if (memory) {
+        preferences = memory.value.preferences;
+      }
+    }
+    return preferences;
+  },
+  {
+    name: "fetch_user_email_preferences",
+    description: "Fetch the user's email preferences.",
+    schema: z.object({}),
+  }
+);
+```
+
+
+### 在中间件内部
+
+您可以在中间件中访问运行时信息，以创建动态提示、修改消息或根据用户上下文控制代理行为。
+
+
+使用 `runtime` 参数在中间件内部访问 [`Runtime`](https://reference.langchain.com/javascript/modules/langgraph.index.Runtime.html) 对象。
+
+```ts
+import * as z from "zod";
+import { createAgent, createMiddleware, SystemMessage } from "langchain";
+import { type Runtime } from "@langchain/langgraph"; // [!code highlight]
+
+const contextSchema = z.object({
+  userName: z.string(),
+});
+
+// Dynamic prompt middleware
+const dynamicPromptMiddleware = createMiddleware({
+  name: "DynamicPrompt",
+  contextSchema
+  beforeModel: (state, runtime: Runtime<z.infer<typeof contextSchema>>) => {  // [!code highlight]
+    const userName = runtime.context?.userName;  // [!code highlight]
+    if (!userName) {
+      throw new Error("userName is required");
+    }
+
+    const systemMsg = `You are a helpful assistant. Address the user as ${userName}.`;
+    return {
+      messages: [new SystemMessage(systemMsg), ...state.messages]
+    };
+  }
+});
+
+// Logging middleware
+const loggingMiddleware = createMiddleware({
+  name: "Logging",
+  contextSchema,
+  beforeModel: (state, runtime) => {  // [!code highlight]
+    console.log(`Processing request for user: ${runtime.context?.userName}`);  // [!code highlight]
+    return;
+  },
+  afterModel: (state, runtime) => {  // [!code highlight]
+    console.log(`Completed request for user: ${runtime.context?.userName}`);  // [!code highlight]
+    return;
+  }
+});
+
+const agent = createAgent({
+  model: "gpt-4o",
+  tools: [
+    /* ... */
+  ],
+  middleware: [dynamicPromptMiddleware, loggingMiddleware],  // [!code highlight]
+  contextSchema,
+});
+
+const result = await agent.invoke(
+  { messages: [{ role: "user", content: "What's my name?" }] },
+  { context: { userName: "John Smith" } }
+);
+```
+
+---
+
+<Callout icon="pen-to-square" iconType="regular">
+    [Edit the source of this page on GitHub.](https://github.com/langchain-ai/docs/edit/main/src/oss\langchain\runtime.mdx)
+</Callout>
+<Tip icon="terminal" iconType="regular">
+    [Connect these docs programmatically](/use-these-docs) to Claude, VSCode, and more via MCP for real-time answers.
+</Tip>

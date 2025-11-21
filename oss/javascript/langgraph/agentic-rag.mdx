@@ -1,0 +1,560 @@
+---
+title: 构建自定义 RAG 代理
+sidebarTitle: 自定义 RAG 代理
+---
+
+
+
+## 概述
+
+在本教程中，我们将使用 LangGraph 构建一个[检索](/oss/javascript/langchain/retrieval)代理。
+
+LangChain 提供内置的[代理](/oss/javascript/langchain/agents)实现，这些实现使用 [LangGraph](/oss/javascript/langgraph/overview) 原语实现。如果需要更深入的定制，可以直接在 LangGraph 中实现代理。本指南演示了检索代理的示例实现。[检索](/oss/javascript/langchain/retrieval)代理在您希望 LLM 决定是从向量存储检索上下文还是直接响应用户时很有用。
+
+在本教程结束时，我们将完成以下工作：
+
+1. 获取和预处理将用于检索的文档。
+2. 为这些文档建立语义搜索索引，并为代理创建检索器工具。
+3. 构建一个能够决定何时使用检索器工具的代理式 RAG 系统。
+
+![混合 RAG](/images/langgraph-hybrid-rag-tutorial.png)
+
+### 概念
+
+我们将涵盖以下概念：
+
+- 使用[文档加载器](/oss/javascript/integrations/document_loaders)、[文本分割器](/oss/javascript/integrations/splitters)、[嵌入](/oss/javascript/integrations/text_embedding)和[向量存储](/oss/javascript/integrations/vectorstores)进行[检索](/oss/javascript/langchain/retrieval)
+- LangGraph [Graph API](/oss/javascript/langgraph/graph-api)，包括状态、节点、边和条件边。
+
+## 设置
+
+让我们下载所需的包并设置 API 密钥：
+
+
+
+<CodeGroup>
+```bash npm
+npm install @langchain/langgraph @langchain/openai @langchain/community @langchain/textsplitters
+```
+
+```bash pnpm
+pnpm install @langchain/langgraph @langchain/openai @langchain/community @langchain/textsplitters
+```
+
+```bash yarn
+yarn add @langchain/langgraph @langchain/openai @langchain/community @langchain/textsplitters
+```
+
+```bash bun
+bun add @langchain/langgraph @langchain/openai @langchain/community @langchain/textsplitters
+```
+</CodeGroup>
+
+
+
+<Tip>
+  注册 LangSmith 以快速发现问题并提高 LangGraph 项目的性能。[LangSmith](https://docs.smith.langchain.com) 让您可以使用跟踪数据来调试、测试和监控使用 LangGraph 构建的 LLM 应用程序。
+</Tip>
+
+## 1. 预处理文档
+
+
+
+1. 获取将在我们的 RAG 系统中使用的文档。我们将使用 [Lilian Weng 的优秀博客](https://lilianweng.github.io/)中最近的三页。我们将首先使用 `CheerioWebBaseLoader` 获取页面的内容：
+  ```typescript
+  import { CheerioWebBaseLoader } from "@langchain/community/document_loaders/web/cheerio";
+
+  const urls = [
+    "https://lilianweng.github.io/posts/2023-06-23-agent/",
+    "https://lilianweng.github.io/posts/2023-03-15-prompt-engineering/",
+    "https://lilianweng.github.io/posts/2023-10-25-adv-attack-llm/",
+  ];
+
+  const docs = await Promise.all(
+    urls.map((url) => new CheerioWebBaseLoader(url).load()),
+  );
+  ```
+2. Split the fetched documents into smaller chunks for indexing into our vectorstore:
+  ```typescript
+  import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
+
+  const docsList = docs.flat();
+
+  const textSplitter = new RecursiveCharacterTextSplitter({
+    chunkSize: 500,
+    chunkOverlap: 50,
+  });
+  const docSplits = await textSplitter.splitDocuments(docsList);
+  ```
+
+
+## 2. 创建检索器工具
+
+现在我们已经有了分割的文档，可以将它们索引到用于语义搜索的向量存储中。
+
+
+
+1. 使用内存向量存储和 OpenAI 嵌入：
+  ```typescript
+  import { MemoryVectorStore } from "@langchain/classic/vectorstores/memory";
+  import { OpenAIEmbeddings } from "@langchain/openai";
+
+  const vectorStore = await MemoryVectorStore.fromDocuments(
+    docSplits,
+    new OpenAIEmbeddings(),
+  );
+
+  const retriever = vectorStore.asRetriever();
+  ```
+2. 使用 LangChain 的预构建 `createRetrieverTool` 创建检索器工具：
+  ```typescript
+  import { createRetrieverTool } from "@langchain/classic/tools/retriever";
+
+  const tool = createRetrieverTool(
+    retriever,
+    {
+      name: "retrieve_blog_posts",
+      description:
+        "Search and return information about Lilian Weng blog posts on LLM agents, prompt engineering, and adversarial attacks on LLMs.",
+    },
+  );
+  const tools = [tool];
+  ```
+
+
+## 3. 生成查询
+
+现在我们将开始为我们的代理式 RAG 图构建组件（[节点](/oss/javascript/langgraph/graph-api#nodes)和[边](/oss/javascript/langgraph/graph-api#edges)）。
+
+
+
+1. 构建一个 `generateQueryOrRespond` 节点。它将调用 LLM 根据当前图状态（消息列表）生成响应。给定输入消息，它将决定使用检索器工具进行检索，或直接响应用户。请注意，我们通过 `.bindTools` 为聊天模型提供对之前创建的 `tools` 的访问权限：
+  ```typescript
+  import { ChatOpenAI } from "@langchain/openai";
+
+  async function generateQueryOrRespond(state) {
+    const { messages } = state;
+    const model = new ChatOpenAI({
+      model: "gpt-4o",
+      temperature: 0,
+    }).bindTools(tools);  // [!code highlight]
+
+    const response = await model.invoke(messages);
+    return {
+      messages: [response],
+    };
+  }
+  ```
+2. Try it on a random input:
+  ```typescript
+  import { HumanMessage } from "@langchain/core/messages";
+
+  const input = { messages: [new HumanMessage("hello!")] };
+  const result = await generateQueryOrRespond(input);
+  console.log(result.messages[0]);
+  ```
+  **Output:**
+  ```
+  AIMessage {
+    content: "Hello! How can I help you today?",
+    tool_calls: []
+  }
+  ```
+3. Ask a question that requires semantic search:
+  ```typescript
+  const input = {
+    messages: [
+      new HumanMessage("What does Lilian Weng say about types of reward hacking?")
+    ]
+  };
+  const result = await generateQueryOrRespond(input);
+  console.log(result.messages[0]);
+  ```
+  **Output:**
+  ```
+  AIMessage {
+    content: "",
+    tool_calls: [
+      {
+        name: "retrieve_blog_posts",
+        args: { query: "types of reward hacking" },
+        id: "call_...",
+        type: "tool_call"
+      }
+    ]
+  }
+  ```
+
+
+## 4. 评估文档
+
+
+
+1. 添加一个节点——`gradeDocuments`——以确定检索到的文档是否与问题相关。我们将使用带有使用 Zod 进行结构化输出的模型进行文档评估。我们还将添加一个[条件边](/oss/javascript/langgraph/graph-api#conditional-edges)——`checkRelevance`——它检查评估结果并返回要前往的节点名称（`generate` 或 `rewrite`）：
+  ```typescript
+  import * as z from "zod";
+  import { ChatPromptTemplate } from "@langchain/core/prompts";
+  import { ChatOpenAI } from "@langchain/openai";
+  import { AIMessage } from "@langchain/core/messages";
+
+  const prompt = ChatPromptTemplate.fromTemplate(
+    `You are a grader assessing relevance of retrieved docs to a user question.
+    Here are the retrieved docs:
+    \n ------- \n
+    {context}
+    \n ------- \n
+    Here is the user question: {question}
+    If the content of the docs are relevant to the users question, score them as relevant.
+    Give a binary score 'yes' or 'no' score to indicate whether the docs are relevant to the question.
+    Yes: The docs are relevant to the question.
+    No: The docs are not relevant to the question.`,
+  );
+
+  const gradeDocumentsSchema = z.object({
+    binaryScore: z.string().describe("Relevance score 'yes' or 'no'"),  // [!code highlight]
+  })
+
+  async function gradeDocuments(state) {
+    const { messages } = state;
+
+    const model = new ChatOpenAI({
+      model: "gpt-4o",
+      temperature: 0,
+    }).withStructuredOutput(gradeDocumentsSchema);
+
+    const score = await prompt.pipe(model).invoke({
+      question: messages.at(0)?.content,
+      context: messages.at(-1)?.content,
+    });
+
+    if (score.binaryScore === "yes") {
+      return "generate";
+    }
+    return "rewrite";
+  }
+  ```
+2. Run this with irrelevant documents in the tool response:
+  ```typescript
+  import { ToolMessage } from "@langchain/core/messages";
+
+  const input = {
+    messages: [
+        new HumanMessage("What does Lilian Weng say about types of reward hacking?"),
+        new AIMessage({
+            tool_calls: [
+                {
+                    type: "tool_call",
+                    name: "retrieve_blog_posts",
+                    args: { query: "types of reward hacking" },
+                    id: "1",
+                }
+            ]
+        }),
+        new ToolMessage({
+            content: "meow",
+            tool_call_id: "1",
+        })
+    ]
+  }
+  const result = await gradeDocuments(input);
+  ```
+3. Confirm that the relevant documents are classified as such:
+  ```typescript
+  const input = {
+    messages: [
+        new HumanMessage("What does Lilian Weng say about types of reward hacking?"),
+        new AIMessage({
+            tool_calls: [
+                {
+                    type: "tool_call",
+                    name: "retrieve_blog_posts",
+                    args: { query: "types of reward hacking" },
+                    id: "1",
+                }
+            ]
+        }),
+        new ToolMessage({
+            content: "reward hacking can be categorized into two types: environment or goal misspecification, and reward tampering",
+            tool_call_id: "1",
+        })
+    ]
+  }
+  const result = await gradeDocuments(input);
+  ```
+
+
+## 5. 重写问题
+
+
+
+1. 构建 `rewrite` 节点。检索器工具可能返回不相关的文档，这表明需要改进原始用户问题。为此，我们将调用 `rewrite` 节点：
+  ```typescript
+  import { ChatPromptTemplate } from "@langchain/core/prompts";
+  import { ChatOpenAI } from "@langchain/openai";
+
+  const rewritePrompt = ChatPromptTemplate.fromTemplate(
+    `Look at the input and try to reason about the underlying semantic intent / meaning. \n
+    Here is the initial question:
+    \n ------- \n
+    {question}
+    \n ------- \n
+    Formulate an improved question:`,
+  );
+
+  async function rewrite(state) {
+    const { messages } = state;
+    const question = messages.at(0)?.content;
+
+    const model = new ChatOpenAI({
+      model: "gpt-4o",
+      temperature: 0,
+    });
+
+    const response = await rewritePrompt.pipe(model).invoke({ question });
+    return {
+      messages: [response],
+    };
+  }
+  ```
+2. Try it out:
+  ```typescript
+  import { HumanMessage, AIMessage, ToolMessage } from "@langchain/core/messages";
+
+  const input = {
+    messages: [
+      new HumanMessage("What does Lilian Weng say about types of reward hacking?"),
+      new AIMessage({
+        content: "",
+        tool_calls: [
+          {
+            id: "1",
+            name: "retrieve_blog_posts",
+            args: { query: "types of reward hacking" },
+            type: "tool_call"
+          }
+        ]
+      }),
+      new ToolMessage({ content: "meow", tool_call_id: "1" })
+    ]
+  };
+
+  const response = await rewrite(input);
+  console.log(response.messages[0].content);
+  ```
+  **Output:**
+  ```
+  What are the different types of reward hacking described by Lilian Weng, and how does she explain them?
+  ```
+
+
+## 6. 生成答案
+
+
+
+1. 构建 `generate` 节点：如果我们通过评估器检查，可以根据原始问题和检索到的上下文生成最终答案：
+  ```typescript
+  import { ChatPromptTemplate } from "@langchain/core/prompts";
+  import { ChatOpenAI } from "@langchain/openai";
+
+  async function generate(state) {
+    const { messages } = state;
+    const question = messages.at(0)?.content;
+    const context = messages.at(-1)?.content;
+
+    const prompt = ChatPromptTemplate.fromTemplate(
+    `You are an assistant for question-answering tasks.
+        Use the following pieces of retrieved context to answer the question.
+        If you don't know the answer, just say that you don't know.
+        Use three sentences maximum and keep the answer concise.
+        Question: {question}
+        Context: {context}`
+    );
+
+    const llm = new ChatOpenAI({
+      model: "gpt-4o",
+      temperature: 0,
+    });
+
+    const ragChain = prompt.pipe(llm);
+
+    const response = await ragChain.invoke({
+      context,
+      question,
+    });
+
+    return {
+      messages: [response],
+    };
+  }
+  ```
+2. Try it:
+  ```typescript
+  import { HumanMessage, AIMessage, ToolMessage } from "@langchain/core/messages";
+
+  const input = {
+    messages: [
+      new HumanMessage("What does Lilian Weng say about types of reward hacking?"),
+      new AIMessage({
+        content: "",
+        tool_calls: [
+          {
+            id: "1",
+            name: "retrieve_blog_posts",
+            args: { query: "types of reward hacking" },
+            type: "tool_call"
+          }
+        ]
+      }),
+      new ToolMessage({
+        content: "reward hacking can be categorized into two types: environment or goal misspecification, and reward tampering",
+        tool_call_id: "1"
+      })
+    ]
+  };
+
+  const response = await generate(input);
+  console.log(response.messages[0].content);
+  ```
+  **Output:**
+  ```
+  Lilian Weng categorizes reward hacking into two types: environment or goal misspecification, and reward tampering. She considers reward hacking as a broad concept that includes both of these categories. Reward hacking occurs when an agent exploits flaws or ambiguities in the reward function to achieve high rewards without performing the intended behaviors.
+  ```
+
+
+## 7. 组装图
+
+现在我们将把所有节点和边组装成一个完整的图：
+
+
+
+* 从 `generateQueryOrRespond` 开始，确定是否需要调用检索器工具
+* 使用条件边路由到下一步：
+  * 如果 `generateQueryOrRespond` 返回 `tool_calls`，则调用检索器工具检索上下文
+  * 否则，直接响应用户
+* 评估检索到的文档内容与问题的相关性（`gradeDocuments`）并路由到下一步：
+  * 如果不相关，使用 `rewrite` 重写问题，然后再次调用 `generateQueryOrRespond`
+  * 如果相关，继续到 `generate` 并使用带有检索到的文档上下文的 @[`ToolMessage`] 生成最终响应
+
+```typescript
+import { StateGraph, START, END } from "@langchain/langgraph";
+import { ToolNode } from "@langchain/langgraph/prebuilt";
+import { AIMessage } from "langchain";
+
+// Create a ToolNode for the retriever
+const toolNode = new ToolNode(tools);
+
+// Helper function to determine if we should retrieve
+function shouldRetrieve(state) {
+  const { messages } = state;
+  const lastMessage = messages.at(-1);
+
+  if (AIMessage.isInstance(lastMessage) && lastMessage.tool_calls.length) {
+    return "retrieve";
+  }
+  return END;
+}
+
+// Define the graph
+const builder = new StateGraph(GraphState)
+  .addNode("generateQueryOrRespond", generateQueryOrRespond)
+  .addNode("retrieve", toolNode)
+  .addNode("gradeDocuments", gradeDocuments)
+  .addNode("rewrite", rewrite)
+  .addNode("generate", generate)
+  // Add edges
+  .addEdge(START, "generateQueryOrRespond")
+  // Decide whether to retrieve
+  .addConditionalEdges("generateQueryOrRespond", shouldRetrieve)
+  .addEdge("retrieve", "gradeDocuments")
+  // Edges taken after grading documents
+  .addConditionalEdges(
+    "gradeDocuments",
+    // Route based on grading decision
+    (state) => {
+      // The gradeDocuments function returns either "generate" or "rewrite"
+      const lastMessage = state.messages.at(-1);
+      return lastMessage.content === "generate" ? "generate" : "rewrite";
+    }
+  )
+  .addEdge("generate", END)
+  .addEdge("rewrite", "generateQueryOrRespond");
+
+// Compile
+const graph = builder.compile();
+```
+
+
+## 8. 运行代理式 RAG
+
+现在让我们通过运行一个问题来测试完整的图：
+
+
+
+```typescript
+import { HumanMessage } from "@langchain/core/messages";
+
+const inputs = {
+  messages: [
+    new HumanMessage("What does Lilian Weng say about types of reward hacking?")
+  ]
+};
+
+for await (const output of await graph.stream(inputs)) {
+  for (const [key, value] of Object.entries(output)) {
+    const lastMsg = output[key].messages[output[key].messages.length - 1];
+    console.log(`Output from node: '${key}'`);
+    console.log({
+      type: lastMsg._getType(),
+      content: lastMsg.content,
+      tool_calls: lastMsg.tool_calls,
+    });
+    console.log("---\n");
+  }
+}
+```
+
+**Output:**
+
+```
+Output from node: 'generateQueryOrRespond'
+{
+  type: 'ai',
+  content: '',
+  tool_calls: [
+    {
+      name: 'retrieve_blog_posts',
+      args: { query: 'types of reward hacking' },
+      id: 'call_...',
+      type: 'tool_call'
+    }
+  ]
+}
+---
+
+Output from node: 'retrieve'
+{
+  type: 'tool',
+  content: '(Note: Some work defines reward tampering as a distinct category...\n' +
+    'At a high level, reward hacking can be categorized into two types: environment or goal misspecification, and reward tampering.\n' +
+    '...',
+  tool_calls: undefined
+}
+---
+
+Output from node: 'generate'
+{
+  type: 'ai',
+  content: 'Lilian Weng categorizes reward hacking into two types: environment or goal misspecification, and reward tampering. She considers reward hacking as a broad concept that includes both of these categories. Reward hacking occurs when an agent exploits flaws or ambiguities in the reward function to achieve high rewards without performing the intended behaviors.',
+  tool_calls: []
+}
+---
+```
+
+---
+
+<Callout icon="pen-to-square" iconType="regular">
+    [Edit the source of this page on GitHub.](https://github.com/langchain-ai/docs/edit/main/src/oss\langgraph\agentic-rag.mdx)
+</Callout>
+<Tip icon="terminal" iconType="regular">
+    [Connect these docs programmatically](/use-these-docs) to Claude, VSCode, and more via MCP for real-time answers.
+</Tip>

@@ -1,0 +1,280 @@
+---
+title: 人在回路
+description: 了解如何为敏感工具操作配置人工审批
+---
+
+某些工具操作可能很敏感，需要在执行前进行人工审批。深度代理通过 LangGraph 的中断功能支持人在回路工作流。您可以使用 `interrupt_on` 参数配置哪些工具需要审批。
+
+## 基本配置
+
+`interrupt_on` 参数接受一个字典，将工具名称映射到中断配置。每个工具可以配置为：
+
+- **`True`**：启用中断，使用默认行为（允许批准、编辑、拒绝）
+- **`False`**：禁用此工具的中断
+- **`{"allowed_decisions": [...]}`**：具有特定允许决策的自定义配置
+
+
+
+```typescript
+import { tool } from "langchain";
+import { createDeepAgent } from "deepagents";
+import { MemorySaver } from "@langchain/langgraph";
+import { z } from "zod";
+import { v4 as uuidv4 } from 'uuid'; // install uuid package: npm install uuid
+
+const deleteFile = tool(
+  async ({ path }: { path: string }) => {
+    return `Deleted ${path}`;
+  },
+  {
+    name: "delete_file",
+    description: "Delete a file from the filesystem.",
+    schema: z.object({
+      path: z.string(),
+    }),
+  },
+);
+
+const sendEmail = tool(
+  async ({ to, subject, body }: { to: string; subject: string; body: string }) => {
+    return `Sent email to ${to}`;
+  },
+  {
+    name: "send_email",
+    description: "Send an email.",
+    schema: z.object({
+      to: z.string(),
+      subject: z.string(),
+      body: z.string(),
+    }),
+  },
+);
+
+// 人在回路需要 checkpointer
+const checkpointer = new MemorySaver();
+
+const agent = createDeepAgent({
+  model: "claude-sonnet-4-5-20250929",
+  tools: [deleteFile, sendEmail],
+  interruptOn: {
+    delete_file: true,  // 默认：批准、编辑、拒绝
+    read_file: false,   // 不需要中断
+    send_email: { allowedDecisions: ["approve", "reject"] },  // 不允许编辑
+  },
+  checkpointer,  // 必需！
+});
+```
+
+
+## 决策类型
+
+`allowed_decisions` 列表控制在审查工具调用时人类可以采取的操作：
+
+- **`"approve"`**：使用代理提出的原始参数执行工具
+- **`"edit"`**：在执行前修改工具参数
+- **`"reject"`**：完全跳过执行此工具调用
+
+您可以为每个工具自定义可用的决策：
+
+
+
+```typescript
+const interruptOn = {
+  // 敏感操作：允许所有选项
+  delete_file: { allowedDecisions: ["approve", "edit", "reject"] },
+
+  // 中等风险：仅允许批准或拒绝
+  write_file: { allowedDecisions: ["approve", "reject"] },
+
+  // 必须批准（不允许拒绝）
+  critical_operation: { allowedDecisions: ["approve"] },
+};
+```
+
+
+## 处理中断
+
+当中断被触发时，代理暂停执行并返回控制权。检查结果中的中断并相应地处理它们。
+
+
+
+```typescript
+import { v4 as uuidv4 } from "uuid";
+import { Command } from "@langchain/langgraph";
+
+// 创建带有 thread_id 的配置以进行状态持久化
+const config = { configurable: { thread_id: uuidv4() } };
+
+// 调用代理
+let result = await agent.invoke({
+  messages: [{ role: "user", content: "Delete the file temp.txt" }],
+}, config);
+
+// 检查执行是否被中断
+if (result.__interrupt__) {
+  // 提取中断信息
+  const interrupts = result.__interrupt__[0].value;
+  const actionRequests = interrupts.actionRequests;
+  const reviewConfigs = interrupts.reviewConfigs;
+
+  // 创建从工具名称到审查配置的查找映射
+  const configMap = Object.fromEntries(
+    reviewConfigs.map((cfg) => [cfg.actionName, cfg])
+  );
+
+  // 向用户显示待处理的操作
+  for (const action of actionRequests) {
+    const reviewConfig = configMap[action.name];
+    console.log(`Tool: ${action.name}`);
+    console.log(`Arguments: ${JSON.stringify(action.args)}`);
+    console.log(`Allowed decisions: ${reviewConfig.allowedDecisions}`);
+  }
+
+  // 获取用户决策（每个 actionRequest 一个，按顺序）
+  const decisions = [
+    { type: "approve" }  // 用户批准了删除
+  ];
+
+  // 使用决策恢复执行
+  result = await agent.invoke(
+    new Command({ resume: { decisions } }),
+    config  // 必须使用相同的配置！
+  );
+}
+
+// 处理最终结果
+console.log(result.messages[result.messages.length - 1].content);
+```
+
+
+## 多个工具调用
+
+当代理调用多个需要审批的工具时，所有中断都会在单个中断中批量处理。您必须按顺序为每个工具提供决策。
+
+
+
+```typescript
+const config = { configurable: { thread_id: uuidv4() } };
+
+let result = await agent.invoke({
+  messages: [{
+    role: "user",
+    content: "Delete temp.txt and send an email to admin@example.com"
+  }]
+}, config);
+
+if (result.__interrupt__) {
+  const interrupts = result.__interrupt__[0].value;
+  const actionRequests = interrupts.actionRequests;
+
+  // 两个工具需要审批
+  console.assert(actionRequests.length === 2);
+
+  // 按照与 actionRequests 相同的顺序提供决策
+  const decisions = [
+    { type: "approve" },  // 第一个工具：delete_file
+    { type: "reject" }    // 第二个工具：send_email
+  ];
+
+  result = await agent.invoke(
+    new Command({ resume: { decisions } }),
+    config
+  );
+}
+```
+
+
+## 编辑工具参数
+
+当 `"edit"` 在允许的决策中时，您可以在执行前修改工具参数：
+
+
+
+```typescript
+if (result.__interrupt__) {
+  const interrupts = result.__interrupt__[0].value;
+  const actionRequest = interrupts.actionRequests[0];
+
+  // 来自代理的原始参数
+  console.log(actionRequest.args);  // { to: "everyone@company.com", ... }
+
+  // 用户决定编辑收件人
+  const decisions = [{
+    type: "edit",
+    editedAction: {
+      name: actionRequest.name,  // 必须包含工具名称
+      args: { to: "team@company.com", subject: "...", body: "..." }
+    }
+  }];
+
+  result = await agent.invoke(
+    new Command({ resume: { decisions } }),
+    config
+  );
+}
+```
+
+
+## 子代理中断
+
+每个子代理都可以有自己的 `interrupt_on` 配置，覆盖主代理的设置：
+
+
+
+```typescript
+const agent = createDeepAgent({
+  tools: [deleteFile, readFile],
+  interruptOn: {
+    delete_file: true,
+    read_file: false,
+  },
+  subagents: [{
+    name: "file-manager",
+    description: "Manages file operations",
+    systemPrompt: "You are a file management assistant.",
+    tools: [deleteFile, readFile],
+    interruptOn: {
+      // 覆盖：在此子代理中要求对读取进行审批
+      delete_file: true,
+      read_file: true,  // 与主代理不同！
+    }
+  }],
+  checkpointer
+});
+```
+
+
+当子代理触发中断时，处理方式相同——检查 `__interrupt__` 并使用 `Command` 恢复。
+
+## 最佳实践
+
+### 始终使用 checkpointer
+
+人在回路需要 checkpointer 来在中断和恢复之间持久化代理状态：
+
+
+
+### 使用相同的线程 ID
+
+恢复时，必须使用具有相同 `thread_id` 的相同配置：
+
+
+
+### 使决策顺序与操作匹配
+
+决策列表必须与 `action_requests` 的顺序匹配：
+
+
+
+### 根据风险定制配置
+
+根据风险级别配置不同的工具：
+
+---
+
+<Callout icon="pen-to-square" iconType="regular">
+    [Edit the source of this page on GitHub.](https://github.com/langchain-ai/docs/edit/main/src/oss\deepagents\human-in-the-loop.mdx)
+</Callout>
+<Tip icon="terminal" iconType="regular">
+    [Connect these docs programmatically](/use-these-docs) to Claude, VSCode, and more via MCP for real-time answers.
+</Tip>

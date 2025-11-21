@@ -1,0 +1,209 @@
+---
+title: Hugging Face
+---
+
+本页涵盖了 LangChain 与 [Hugging Face Hub](https://huggingface.co/) 以及 [transformers](https://huggingface.co/docs/transformers/index)、[sentence transformers](https://sbert.net/) 和 [datasets](https://huggingface.co/docs/datasets/index) 等库的所有集成。
+
+{/* ## 安装和设置
+
+<CodeGroup>
+    ```bash pip
+    pip install langchain-huggingface
+    ```
+
+    ```bash uv
+    uv add langchain-huggingface
+    ```
+</CodeGroup> */}
+
+## 聊天模型
+
+### ChatHuggingFace
+
+我们可以使用 `Hugging Face` LLM 类，也可以直接使用 `ChatHuggingFace` 类。
+
+查看[使用示例](/oss/python/integrations/chat/huggingface)。
+
+```python
+from langchain_huggingface import ChatHuggingFace
+```
+
+## LLMs
+
+### HuggingFaceEndpoint
+
+我们可以使用 `HuggingFaceEndpoint` 类通过无服务器 [Inference Providers](https://huggingface.co/docs/inference-providers) 或专用 [Inference Endpoints](https://huggingface.co/inference-endpoints/dedicated) 运行开源模型。
+
+查看[使用示例](/oss/python/integrations/llms/huggingface_endpoint)。
+
+```python
+from langchain_huggingface import HuggingFaceEndpoint
+```
+
+### HuggingFacePipeline
+
+我们可以使用 `HuggingFacePipeline` 类在本地运行开源模型。
+
+查看[使用示例](/oss/python/integrations/llms/huggingface_pipelines)。
+
+```python
+from langchain_huggingface import HuggingFacePipeline
+```
+
+## 嵌入模型
+
+### HuggingFaceEmbeddings
+
+我们可以使用 `HuggingFaceEmbeddings` 类在本地运行开源嵌入模型。
+
+查看[使用示例](/oss/python/integrations/text_embedding/huggingfacehub)。
+
+```python
+from langchain_huggingface import HuggingFaceEmbeddings
+```
+
+### HuggingFaceEndpointEmbeddings
+
+我们可以使用 `HuggingFaceEndpointEmbeddings` 类通过专用 [Inference Endpoint](https://huggingface.co/inference-endpoints/dedicated) 运行开源嵌入模型。
+
+查看[使用示例](/oss/python/integrations/text_embedding/huggingfacehub)。
+
+```python
+from langchain_huggingface import HuggingFaceEndpointEmbeddings
+```
+
+### HuggingFaceInferenceAPIEmbeddings
+
+我们可以使用 `HuggingFaceInferenceAPIEmbeddings` 类通过 [Inference Providers](https://huggingface.co/docs/inference-providers) 运行开源嵌入模型。
+
+查看[使用示例](/oss/python/integrations/text_embedding/huggingfacehub)。
+
+```python
+from langchain_community.embeddings import HuggingFaceInferenceAPIEmbeddings
+```
+
+### HuggingFaceInstructEmbeddings
+
+我们可以使用 `HuggingFaceInstructEmbeddings` 类在本地运行开源嵌入模型。
+
+查看[使用示例](/oss/python/integrations/text_embedding/instruct_embeddings)。
+
+```python
+from langchain_community.embeddings import HuggingFaceInstructEmbeddings
+```
+
+### HuggingFaceBgeEmbeddings
+
+>[HuggingFace 上的 BGE 模型](https://huggingface.co/BAAI/bge-large-en-v1.5) 是[最好的开源嵌入模型](https://huggingface.co/spaces/mteb/leaderboard)之一。
+>BGE 模型由[北京智源人工智能研究院 (BAAI)](https://en.wikipedia.org/wiki/Beijing_Academy_of_Artificial_Intelligence) 创建。`BAAI` 是一家从事人工智能研发的私营非营利组织。
+
+查看[使用示例](/oss/python/integrations/text_embedding/bge_huggingface)。
+
+```python
+from langchain_community.embeddings import HuggingFaceBgeEmbeddings
+```
+
+## 文档加载器
+
+### Hugging Face 数据集
+
+>[Hugging Face Hub](https://huggingface.co/docs/hub/index) 拥有超过 75,000 个
+> [数据集](https://huggingface.co/docs/hub/index#datasets)，涵盖 100 多种语言，
+> 可用于 NLP、计算机视觉和音频等广泛的任务。
+> 它们用于各种任务，如翻译、自动语音
+> 识别和图像分类。
+
+我们需要安装 `datasets` python 包。
+
+<CodeGroup>
+    ```bash pip
+    pip install datasets
+    ```
+
+    ```bash uv
+    uv add datasets
+    ```
+</CodeGroup>
+
+查看[使用示例](/oss/python/integrations/document_loaders/hugging_face_dataset)。
+
+```python
+from langchain_community.document_loaders.hugging_face_dataset import HuggingFaceDatasetLoader
+```
+
+### Hugging Face 模型加载器
+
+>从 `Hugging Face Hub` 加载模型信息，包括 README 内容。
+>
+>此加载器与 `Hugging Face Models API` 交互以获取
+> 并加载模型元数据和 README 文件。
+> API 允许您根据
+> 特定条件（如模型标签、作者等）搜索和过滤模型。
+
+```python
+from langchain_community.document_loaders import HuggingFaceModelLoader
+```
+
+### 图像字幕
+
+它使用 Hugging Face 模型生成图像字幕。
+
+我们需要安装几个 python 包。
+
+<CodeGroup>
+    ```bash pip
+    pip install transformers pillow
+    ```
+
+    ```bash uv
+    uv add transformers pillow
+    ```
+</CodeGroup>
+
+查看[使用示例](/oss/python/integrations/document_loaders/image_captions)。
+
+```python
+from langchain_community.document_loaders import ImageCaptionLoader
+```
+
+## 工具
+
+### Hugging Face Hub 工具
+
+>[Hugging Face 工具](https://huggingface.co/docs/transformers/v4.29.0/en/custom_tools)
+> 支持文本 I/O，并使用 `load_huggingface_tool` 函数加载。
+
+我们需要安装几个 python 包。
+
+<CodeGroup>
+    ```bash pip
+    pip install transformers huggingface_hub
+    ```
+
+    ```bash uv
+    uv add transformers huggingface_hub
+    ```
+</CodeGroup>
+
+查看[使用示例](/oss/python/integrations/tools/huggingface_tools)。
+
+```python
+from langchain_community.agent_toolkits.load_tools import load_huggingface_tool
+```
+
+### Hugging Face 文本转语音模型推理
+
+> 它是 `OpenAI Text-to-Speech API` 的包装器。
+
+```python
+from langchain_community.tools.audio import HuggingFaceTextToSpeechModelInference
+```
+
+---
+
+<Callout icon="pen-to-square" iconType="regular">
+    [Edit the source of this page on GitHub.](https://github.com/langchain-ai/docs/edit/main/src/oss\python\integrations\providers\huggingface.mdx)
+</Callout>
+<Tip icon="terminal" iconType="regular">
+    [Connect these docs programmatically](/use-these-docs) to Claude, VSCode, and more via MCP for real-time answers.
+</Tip>

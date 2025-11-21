@@ -1,0 +1,569 @@
+---
+title: 构建自定义 SQL 智能体
+sidebarTitle: 自定义 SQL 智能体
+---
+
+import ChatModelTabsPy from '/snippets/chat-model-tabs.mdx';
+import ChatModelTabsJS from '/snippets/chat-model-tabs-js.mdx';
+
+
+在本教程中，我们将使用 LangGraph 构建一个可以回答 SQL 数据库问题的自定义智能体。
+
+LangChain 提供了内置的[智能体](/oss/python/langchain/agents)实现，使用 [LangGraph](/oss/python/langgraph/overview) 原语实现。如果需要更深层次的定制，可以直接在 LangGraph 中实现智能体。本指南演示了 SQL 智能体的示例实现。您可以在[这里](/oss/python/langchain/sql-agent)找到使用更高级别 LangChain 抽象构建 SQL 智能体的教程。
+
+<Warning>
+构建 SQL 数据库的问答系统需要执行模型生成的 SQL 查询。这样做存在固有风险。确保您的数据库连接权限始终尽可能狭窄地限定在智能体的需求范围内。这将减轻（但不会消除）构建模型驱动系统的风险。
+</Warning>
+
+[预构建智能体](/oss/python/langchain/sql-agent)让我们可以快速开始，但我们依赖系统提示来约束其行为——例如，我们指示智能体始终从"列出表"工具开始，并在执行查询之前始终运行查询检查器工具。
+
+我们可以通过自定义智能体在 LangGraph 中实现更高程度的控制。在这里，我们实现了一个简单的 ReAct 智能体设置，为特定工具调用设置专用节点。我们将使用与预构建智能体相同的[状态]。
+
+### 概念
+
+我们将涵盖以下概念：
+
+- 用于从 SQL 数据库读取的[工具](/oss/python/langchain/tools)
+- LangGraph [图 API](/oss/python/langgraph/graph-api)，包括状态、节点、边和条件边。
+- [人机协作](/oss/python/langgraph/interrupts)流程
+
+## 设置
+
+### 安装
+
+    <CodeGroup>
+    ```bash pip
+    pip install langchain  langgraph  langchain-community
+    ```
+    </CodeGroup>
+
+
+
+### LangSmith
+设置 [LangSmith](https://smith.langchain.com) 以检查链或智能体内部发生的情况。然后设置以下环境变量：
+
+    ```shell
+    export LANGSMITH_TRACING="true"
+    export LANGSMITH_API_KEY="..."
+    ```
+
+## 1. 选择一个 LLM
+
+选择一个支持[工具调用](/oss/python/integrations/providers/overview)的模型：
+
+<ChatModelTabsPy />
+
+
+
+下面示例中显示的输出使用了 OpenAI。
+
+## 2. 配置数据库
+
+您将为本教程创建一个 [SQLite 数据库](https://www.sqlitetutorial.net/sqlite-sample-database/)。SQLite 是一个轻量级数据库，易于设置和使用。我们将加载 `chinook` 数据库，这是一个代表数字媒体商店的示例数据库。
+
+为方便起见，我们已将数据库（`Chinook.db`）托管在公共 GCS 存储桶上。
+
+```python
+import requests, pathlib
+
+url = "https://storage.googleapis.com/benchmarks-artifacts/chinook/Chinook.db"
+local_path = pathlib.Path("Chinook.db")
+
+if local_path.exists():
+    print(f"{local_path} already exists, skipping download.")
+else:
+    response = requests.get(url)
+    if response.status_code == 200:
+        local_path.write_bytes(response.content)
+        print(f"File downloaded and saved as {local_path}")
+    else:
+        print(f"Failed to download the file. Status code: {response.status_code}")
+```
+
+我们将使用 `langchain_community` 包中提供的便捷 SQL 数据库包装器与数据库交互。该包装器提供了一个简单的接口来执行 SQL 查询并获取结果：
+
+```python
+from langchain_community.utilities import SQLDatabase
+
+db = SQLDatabase.from_uri("sqlite:///Chinook.db")
+
+print(f"Dialect: {db.dialect}")
+print(f"Available tables: {db.get_usable_table_names()}")
+print(f'Sample output: {db.run("SELECT * FROM Artist LIMIT 5;")}')
+```
+```
+Dialect: sqlite
+Available tables: ['Album', 'Artist', 'Customer', 'Employee', 'Genre', 'Invoice', 'InvoiceLine', 'MediaType', 'Playlist', 'PlaylistTrack', 'Track']
+Sample output: [(1, 'AC/DC'), (2, 'Accept'), (3, 'Aerosmith'), (4, 'Alanis Morissette'), (5, 'Alice In Chains')]
+```
+
+
+
+## 3. 添加数据库交互工具
+
+使用 `langchain_community` 包中提供的 `SQLDatabase` 包装器与数据库交互。该包装器提供了一个简单的接口来执行 SQL 查询并获取结果：
+
+```python
+from langchain_community.agent_toolkits import SQLDatabaseToolkit
+
+toolkit = SQLDatabaseToolkit(db=db, llm=llm)
+
+tools = toolkit.get_tools()
+
+for tool in tools:
+    print(f"{tool.name}: {tool.description}\n")
+```
+```
+sql_db_query: Input to this tool is a detailed and correct SQL query, output is a result from the database. If the query is not correct, an error message will be returned. If an error is returned, rewrite the query, check the query, and try again. If you encounter an issue with Unknown column 'xxxx' in 'field list', use sql_db_schema to query the correct table fields.
+
+sql_db_schema: Input to this tool is a comma-separated list of tables, output is the schema and sample rows for those tables. Be sure that the tables actually exist by calling sql_db_list_tables first! Example Input: table1, table2, table3
+
+sql_db_list_tables: Input is an empty string, output is a comma-separated list of tables in the database.
+
+sql_db_query_checker: Use this tool to double check if your query is correct before executing it. Always use this tool before executing a query with sql_db_query!
+```
+
+
+
+## 4. 定义应用步骤
+
+我们为以下步骤构建专用节点：
+
+- 列出数据库表
+- 调用"获取架构"工具
+- 生成查询
+- 检查查询
+
+将这些步骤放在专用节点中让我们能够（1）在需要时强制工具调用，以及（2）自定义与每个步骤相关的提示。
+
+```python
+from typing import Literal
+
+from langchain.messages import AIMessage
+from langchain_core.runnables import RunnableConfig
+from langgraph.graph import END, START, MessagesState, StateGraph
+from langgraph.prebuilt import ToolNode
+
+
+get_schema_tool = next(tool for tool in tools if tool.name == "sql_db_schema")
+get_schema_node = ToolNode([get_schema_tool], name="get_schema")
+
+run_query_tool = next(tool for tool in tools if tool.name == "sql_db_query")
+run_query_node = ToolNode([run_query_tool], name="run_query")
+
+
+# 示例：创建预定的工具调用
+def list_tables(state: MessagesState):
+    tool_call = {
+        "name": "sql_db_list_tables",
+        "args": {},
+        "id": "abc123",
+        "type": "tool_call",
+    }
+    tool_call_message = AIMessage(content="", tool_calls=[tool_call])
+
+    list_tables_tool = next(tool for tool in tools if tool.name == "sql_db_list_tables")
+    tool_message = list_tables_tool.invoke(tool_call)
+    response = AIMessage(f"Available tables: {tool_message.content}")
+
+    return {"messages": [tool_call_message, tool_message, response]}
+
+
+# 示例：强制模型创建工具调用
+def call_get_schema(state: MessagesState):
+    # 注意，LangChain 强制所有模型接受 `tool_choice="any"`
+    # 以及 `tool_choice=<工具名称字符串>`。
+    llm_with_tools = llm.bind_tools([get_schema_tool], tool_choice="any")
+    response = llm_with_tools.invoke(state["messages"])
+
+    return {"messages": [response]}
+
+
+generate_query_system_prompt = """
+您是一个旨在与 SQL 数据库交互的智能体。
+给定一个输入问题，创建一个语法正确的 {dialect} 查询来运行，
+然后查看查询结果并返回答案。除非用户
+指定了他们希望获得的特定示例数量，否则始终将您的
+查询限制为最多 {top_k} 个结果。
+
+您可以按相关列对结果进行排序，以返回数据库中
+最有趣的示例。永远不要查询特定表的所有列，
+只询问与问题相关的列。
+
+不要对数据库执行任何 DML 语句（INSERT、UPDATE、DELETE、DROP 等）。
+""".format(
+    dialect=db.dialect,
+    top_k=5,
+)
+
+
+def generate_query(state: MessagesState):
+    system_message = {
+        "role": "system",
+        "content": generate_query_system_prompt,
+    }
+    # 我们在这里不强制工具调用，以允许模型
+    # 在获得解决方案时自然响应。
+    llm_with_tools = llm.bind_tools([run_query_tool])
+    response = llm_with_tools.invoke([system_message] + state["messages"])
+
+    return {"messages": [response]}
+
+
+check_query_system_prompt = """
+您是一位非常注重细节的 SQL 专家。
+仔细检查 {dialect} 查询中的常见错误，包括：
+- 对 NULL 值使用 NOT IN
+- 应该使用 UNION ALL 时使用了 UNION
+- 对排他范围使用 BETWEEN
+- 谓词中的数据类型不匹配
+- 正确引用标识符
+- 为函数使用正确数量的参数
+- 转换为正确的数据类型
+- 为连接使用正确的列
+
+如果存在上述任何错误，请重写查询。如果没有错误，
+只需重现原始查询。
+
+运行此检查后，您将调用适当的工具来执行查询。
+""".format(dialect=db.dialect)
+
+
+def check_query(state: MessagesState):
+    system_message = {
+        "role": "system",
+        "content": check_query_system_prompt,
+    }
+
+    # 生成一个人工用户消息来检查
+    tool_call = state["messages"][-1].tool_calls[0]
+    user_message = {"role": "user", "content": tool_call["args"]["query"]}
+    llm_with_tools = llm.bind_tools([run_query_tool], tool_choice="any")
+    response = llm_with_tools.invoke([system_message, user_message])
+    response.id = state["messages"][-1].id
+
+    return {"messages": [response]}
+```
+
+
+
+## 5. 实现智能体
+
+我们现在可以使用[图 API](/oss/python/langgraph/graph-api) 将这些步骤组装成一个工作流。我们在查询生成步骤定义一个[条件边](/oss/python/langgraph/graph-api#conditional-edges)，如果生成了查询，将路由到查询检查器，或者如果没有工具调用（例如 LLM 已经提供了查询的响应），则结束。
+
+```python
+def should_continue(state: MessagesState) -> Literal[END, "check_query"]:
+    messages = state["messages"]
+    last_message = messages[-1]
+    if not last_message.tool_calls:
+        return END
+    else:
+        return "check_query"
+
+
+builder = StateGraph(MessagesState)
+builder.add_node(list_tables)
+builder.add_node(call_get_schema)
+builder.add_node(get_schema_node, "get_schema")
+builder.add_node(generate_query)
+builder.add_node(check_query)
+builder.add_node(run_query_node, "run_query")
+
+builder.add_edge(START, "list_tables")
+builder.add_edge("list_tables", "call_get_schema")
+builder.add_edge("call_get_schema", "get_schema")
+builder.add_edge("get_schema", "generate_query")
+builder.add_conditional_edges(
+    "generate_query",
+    should_continue,
+)
+builder.add_edge("check_query", "run_query")
+builder.add_edge("run_query", "generate_query")
+
+agent = builder.compile()
+```
+我们在下面可视化应用程序：
+```python
+from IPython.display import Image, display
+from langchain_core.runnables.graph import CurveStyle, MermaidDrawMethod, NodeStyles
+
+display(Image(agent.get_graph().draw_mermaid_png()))
+```
+
+
+<img
+  src="/oss/images/sql-agent-langgraph.png"
+  alt="SQL agent graph"
+  style={{ height: "800px" }}
+/>
+
+我们现在可以调用图：
+```python
+question = "Which genre on average has the longest tracks?"
+
+for step in agent.stream(
+    {"messages": [{"role": "user", "content": question}]},
+    stream_mode="values",
+):
+    step["messages"][-1].pretty_print()
+```
+
+
+```
+================================ Human Message =================================
+
+Which genre on average has the longest tracks?
+================================== Ai Message ==================================
+
+Available tables: Album, Artist, Customer, Employee, Genre, Invoice, InvoiceLine, MediaType, Playlist, PlaylistTrack, Track
+================================== Ai Message ==================================
+Tool Calls:
+  sql_db_schema (call_yzje0tj7JK3TEzDx4QnRR3lL)
+ Call ID: call_yzje0tj7JK3TEzDx4QnRR3lL
+  Args:
+    table_names: Genre, Track
+================================= Tool Message =================================
+Name: sql_db_schema
+
+
+CREATE TABLE "Genre" (
+	"GenreId" INTEGER NOT NULL,
+	"Name" NVARCHAR(120),
+	PRIMARY KEY ("GenreId")
+)
+
+/*
+3 rows from Genre table:
+GenreId	Name
+1	Rock
+2	Jazz
+3	Metal
+*/
+
+
+CREATE TABLE "Track" (
+	"TrackId" INTEGER NOT NULL,
+	"Name" NVARCHAR(200) NOT NULL,
+	"AlbumId" INTEGER,
+	"MediaTypeId" INTEGER NOT NULL,
+	"GenreId" INTEGER,
+	"Composer" NVARCHAR(220),
+	"Milliseconds" INTEGER NOT NULL,
+	"Bytes" INTEGER,
+	"UnitPrice" NUMERIC(10, 2) NOT NULL,
+	PRIMARY KEY ("TrackId"),
+	FOREIGN KEY("MediaTypeId") REFERENCES "MediaType" ("MediaTypeId"),
+	FOREIGN KEY("GenreId") REFERENCES "Genre" ("GenreId"),
+	FOREIGN KEY("AlbumId") REFERENCES "Album" ("AlbumId")
+)
+
+/*
+3 rows from Track table:
+TrackId	Name	AlbumId	MediaTypeId	GenreId	Composer	Milliseconds	Bytes	UnitPrice
+1	For Those About To Rock (We Salute You)	1	1	1	Angus Young, Malcolm Young, Brian Johnson	343719	11170334	0.99
+2	Balls to the Wall	2	2	1	U. Dirkschneider, W. Hoffmann, H. Frank, P. Baltes, S. Kaufmann, G. Hoffmann	342562	5510424	0.99
+3	Fast As a Shark	3	2	1	F. Baltes, S. Kaufman, U. Dirkscneider & W. Hoffman	230619	3990994	0.99
+*/
+================================== Ai Message ==================================
+Tool Calls:
+  sql_db_query (call_cb9ApLfZLSq7CWg6jd0im90b)
+ Call ID: call_cb9ApLfZLSq7CWg6jd0im90b
+  Args:
+    query: SELECT Genre.Name, AVG(Track.Milliseconds) AS AvgMilliseconds FROM Track JOIN Genre ON Track.GenreId = Genre.GenreId GROUP BY Genre.GenreId ORDER BY AvgMilliseconds DESC LIMIT 5;
+================================== Ai Message ==================================
+Tool Calls:
+  sql_db_query (call_DMVALfnQ4kJsuF3Yl6jxbeAU)
+ Call ID: call_DMVALfnQ4kJsuF3Yl6jxbeAU
+  Args:
+    query: SELECT Genre.Name, AVG(Track.Milliseconds) AS AvgMilliseconds FROM Track JOIN Genre ON Track.GenreId = Genre.GenreId GROUP BY Genre.GenreId ORDER BY AvgMilliseconds DESC LIMIT 5;
+================================= Tool Message =================================
+Name: sql_db_query
+
+[('Sci Fi & Fantasy', 2911783.0384615385), ('Science Fiction', 2625549.076923077), ('Drama', 2575283.78125), ('TV Shows', 2145041.0215053763), ('Comedy', 1585263.705882353)]
+================================== Ai Message ==================================
+
+The genre with the longest tracks on average is "Sci Fi & Fantasy," with an average track length of approximately 2,911,783 milliseconds. Other genres with relatively long tracks include "Science Fiction," "Drama," "TV Shows," and "Comedy."
+```
+<Tip>
+查看上述运行的 [LangSmith 跟踪](https://smith.langchain.com/public/94b8c9ac-12f7-4692-8706-836a1f30f1ea/r)。
+</Tip>
+
+
+
+## 6. 实现人机协作审查
+
+在执行智能体的 SQL 查询之前检查它们是否有任何意外操作或低效率是明智的做法。
+
+在这里，我们利用 LangGraph 的[人机协作](/oss/python/langgraph/interrupts)功能在执行 SQL 查询之前暂停运行并等待人工审查。使用 LangGraph 的[持久层](/oss/python/langgraph/persistence)，我们可以无限期地暂停运行（或至少在持久层存活期间）。
+
+让我们将 `sql_db_query` 工具包装在一个接收人工输入的节点中。我们可以使用 [interrupt](/oss/python/langgraph/interrupts) 函数来实现这一点。下面，我们允许输入来批准工具调用、编辑其参数或提供用户反馈。
+
+```python
+from langchain_core.runnables import RunnableConfig
+from langchain.tools import tool
+from langgraph.types import interrupt
+
+@tool(
+    run_query_tool.name,
+    description=run_query_tool.description,
+    args_schema=run_query_tool.args_schema
+)
+def run_query_tool_with_interrupt(config: RunnableConfig, **tool_input):
+    request = {
+        "action": run_query_tool.name,
+        "args": tool_input,
+        "description": "Please review the tool call"
+    }
+    response = interrupt([request]) # [!code highlight]
+    # 批准工具调用
+    if response["type"] == "accept":
+        tool_response = run_query_tool.invoke(tool_input, config)
+    # 更新工具调用参数
+    elif response["type"] == "edit":
+        tool_input = response["args"]["args"]
+        tool_response = run_query_tool.invoke(tool_input, config)
+    # 用用户反馈响应 LLM
+    elif response["type"] == "response":
+        user_feedback = response["args"]
+        tool_response = user_feedback
+    else:
+        raise ValueError(f"Unsupported interrupt response type: {response['type']}")
+
+    return tool_response
+```
+
+
+
+<Note>
+上述实现遵循更广泛的[人机协作](/oss/python/langgraph/interrupts)指南中的[工具中断示例](/oss/python/langgraph/interrupts#configuring-interrupts)。有关详细信息和替代方案，请参阅该指南。
+</Note>
+
+现在让我们重新组装我们的图。我们将用人工审查替换程序化检查。请注意，我们现在包含一个 [checkpointer](/oss/python/langgraph/persistence)；这是暂停和恢复运行所必需的。
+
+```python
+from langgraph.checkpoint.memory import InMemorySaver
+
+def should_continue(state: MessagesState) -> Literal[END, "run_query"]:
+    messages = state["messages"]
+    last_message = messages[-1]
+    if not last_message.tool_calls:
+        return END
+    else:
+        return "run_query"
+
+builder = StateGraph(MessagesState)
+builder.add_node(list_tables)
+builder.add_node(call_get_schema)
+builder.add_node(get_schema_node, "get_schema")
+builder.add_node(generate_query)
+builder.add_node(run_query_node, "run_query")
+
+builder.add_edge(START, "list_tables")
+builder.add_edge("list_tables", "call_get_schema")
+builder.add_edge("call_get_schema", "get_schema")
+builder.add_edge("get_schema", "generate_query")
+builder.add_conditional_edges(
+    "generate_query",
+    should_continue,
+)
+builder.add_edge("run_query", "generate_query")
+
+checkpointer = InMemorySaver() # [!code highlight]
+agent = builder.compile(checkpointer=checkpointer) # [!code highlight]
+```
+
+
+
+我们可以像以前一样调用图。这次，执行被中断：
+
+```python
+import json
+
+config = {"configurable": {"thread_id": "1"}}
+
+question = "Which genre on average has the longest tracks?"
+
+for step in agent.stream(
+    {"messages": [{"role": "user", "content": question}]},
+    config,
+    stream_mode="values",
+):
+    if "messages" in step:
+        step["messages"][-1].pretty_print()
+    elif "__interrupt__" in step:
+        action = step["__interrupt__"][0]
+        print("INTERRUPTED:")
+        for request in action.value:
+            print(json.dumps(request, indent=2))
+    else:
+        pass
+```
+
+
+
+```
+...
+
+INTERRUPTED:
+{
+  "action": "sql_db_query",
+  "args": {
+    "query": "SELECT Genre.Name, AVG(Track.Milliseconds) AS AvgLength FROM Track JOIN Genre ON Track.GenreId = Genre.GenreId GROUP BY Genre.Name ORDER BY AvgLength DESC LIMIT 5;"
+  },
+  "description": "Please review the tool call"
+}
+```
+我们可以使用 [Command](/oss/python/langgraph/use-graph-api#combine-control-flow-and-state-updates-with-command) 接受或编辑工具调用：
+
+```python
+from langgraph.types import Command
+
+
+for step in agent.stream(
+    Command(resume={"type": "accept"}),
+    # Command(resume={"type": "edit", "args": {"query": "..."}}),
+    config,
+    stream_mode="values",
+):
+    if "messages" in step:
+        step["messages"][-1].pretty_print()
+    elif "__interrupt__" in step:
+        action = step["__interrupt__"][0]
+        print("INTERRUPTED:")
+        for request in action.value:
+            print(json.dumps(request, indent=2))
+    else:
+        pass
+```
+
+
+
+```
+================================== Ai Message ==================================
+Tool Calls:
+  sql_db_query (call_t4yXkD6shwdTPuelXEmY3sAY)
+ Call ID: call_t4yXkD6shwdTPuelXEmY3sAY
+  Args:
+    query: SELECT Genre.Name, AVG(Track.Milliseconds) AS AvgLength FROM Track JOIN Genre ON Track.GenreId = Genre.GenreId GROUP BY Genre.Name ORDER BY AvgLength DESC LIMIT 5;
+================================= Tool Message =================================
+Name: sql_db_query
+
+[('Sci Fi & Fantasy', 2911783.0384615385), ('Science Fiction', 2625549.076923077), ('Drama', 2575283.78125), ('TV Shows', 2145041.0215053763), ('Comedy', 1585263.705882353)]
+================================== Ai Message ==================================
+
+The genre with the longest average track length is "Sci Fi & Fantasy" with an average length of about 2,911,783 milliseconds. Other genres with long average track lengths include "Science Fiction," "Drama," "TV Shows," and "Comedy."
+```
+
+有关详细信息，请参阅[人机协作指南](/oss/python/langgraph/interrupts)。
+
+## 下一步
+查看[评估图](/langsmith/evaluate-graph)指南，了解如何使用 LangSmith 评估 LangGraph 应用程序，包括像这样的 SQL 智能体。
+
+---
+
+<Callout icon="pen-to-square" iconType="regular">
+    [Edit the source of this page on GitHub.](https://github.com/langchain-ai/docs/edit/main/src/oss\langgraph\sql-agent.mdx)
+</Callout>
+<Tip icon="terminal" iconType="regular">
+    [Connect these docs programmatically](/use-these-docs) to Claude, VSCode, and more via MCP for real-time answers.
+</Tip>

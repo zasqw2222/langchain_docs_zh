@@ -1,0 +1,89 @@
+---
+title: LangGraph 概述
+sidebarTitle: 概述
+---
+
+<Callout icon="bullhorn" color="#DFC5FE" iconType="regular">
+    **LangGraph v1.0 现已推出！**
+
+    有关更改的完整列表以及如何升级代码的说明，请参阅[发布说明](/oss/python/releases/langgraph-v1)和[迁移指南](/oss/python/migrate/langgraph-v1)。
+
+    如果您遇到任何问题或有反馈，请[提交问题](https://github.com/langchain-ai/docs/issues/new?template=02-langgraph.yml&labels=langgraph,python)，以便我们改进。要查看 v0.x 文档，请[转到归档内容](https://github.com/langchain-ai/langgraph/tree/main/docs/docs)。
+</Callout>
+
+
+
+
+受到塑造代理未来的公司（包括 Klarna、Replit、Elastic 等）的信任，LangGraph 是一个低级别的编排框架和运行时，用于构建、管理和部署长时间运行的有状态代理。
+
+LangGraph 是非常低级别的，完全专注于代理**编排**。在使用 LangGraph 之前，我们建议您熟悉用于构建代理的一些组件，从[模型](/oss/python/langchain/models)和[工具](/oss/python/langchain/tools)开始。
+
+我们将在整个文档中经常使用 [LangChain](/oss/python/langchain/overview) 组件来集成模型和工具，但您不需要使用 LangChain 来使用 LangGraph。如果您刚刚开始使用代理或想要更高级别的抽象，我们建议您使用 LangChain 的[代理](/oss/python/langchain/agents)，它们为常见的 LLM 和工具调用循环提供预构建的架构。
+
+LangGraph 专注于对代理编排重要的底层功能：持久执行、流式传输、人在回路等。
+
+## <Icon icon="download" size={20} /> 安装
+
+<CodeGroup>
+```bash pip
+pip install -U langgraph
+```
+
+```bash uv
+uv add langgraph
+```
+</CodeGroup>
+
+
+
+
+然后，创建一个简单的 hello world 示例：
+
+```python
+from langgraph.graph import StateGraph, MessagesState, START, END
+
+def mock_llm(state: MessagesState):
+    return {"messages": [{"role": "ai", "content": "hello world"}]}
+
+graph = StateGraph(MessagesState)
+graph.add_node(mock_llm)
+graph.add_edge(START, "mock_llm")
+graph.add_edge("mock_llm", END)
+graph = graph.compile()
+
+graph.invoke({"messages": [{"role": "user", "content": "hi!"}]})
+```
+
+
+
+
+## 核心优势
+
+LangGraph 为*任何*长时间运行的有状态工作流或代理提供低级别的支持基础设施。LangGraph 不抽象提示或架构，并提供以下核心优势：
+
+* [持久执行](/oss/python/langgraph/durable-execution)：构建能够从故障中持续存在并可以长时间运行的代理，从停止的地方恢复。
+* [人在回路](/oss/python/langgraph/interrupts)：通过在任何点检查和修改代理状态来纳入人工监督。
+* [全面内存](/oss/python/concepts/memory)：创建具有用于持续推理的短期工作内存和跨会话的长期内存的有状态代理。
+* [使用 LangSmith 进行调试](/langsmith/home)：通过可视化工具深入了解复杂的代理行为，这些工具跟踪执行路径、捕获状态转换并提供详细的运行时指标。
+* [生产就绪部署](/langsmith/deployments)：使用专为处理有状态、长时间运行工作流的独特挑战而设计的可扩展基础设施，自信地部署复杂的代理系统。
+
+## LangGraph 生态系统
+
+虽然 LangGraph 可以独立使用，但它也可以与任何 LangChain 产品无缝集成，为开发人员提供构建代理的完整工具集。为了改进您的 LLM 应用程序开发，请将 LangGraph 与以下产品配对：
+
+* [LangSmith](http://www.langchain.com/langsmith) — 对代理评估和可观测性很有帮助。调试表现不佳的 LLM 应用程序运行，评估代理轨迹，在生产中获得可见性，并随着时间的推移提高性能。
+* [LangGraph](/oss/python/langgraph/overview) — 使用专为长时间运行的有状态工作流构建的部署平台，轻松部署和扩展代理。跨团队发现、重用、配置和共享代理——并在 [Studio](/langsmith/studio) 中使用可视化原型快速迭代。
+* [LangChain](/oss/python/langchain/overview) - 提供集成和可组合组件，以简化 LLM 应用程序开发。包含构建在 LangGraph 之上的代理抽象。
+
+## 致谢
+
+LangGraph 受到 [Pregel](https://research.google/pubs/pub37252/) 和 [Apache Beam](https://beam.apache.org/) 的启发。公共接口从 [NetworkX](https://networkx.org/documentation/latest/) 汲取灵感。LangGraph 由 LangChain Inc（LangChain 的创建者）构建，但可以在没有 LangChain 的情况下使用。
+
+---
+
+<Callout icon="pen-to-square" iconType="regular">
+    [Edit the source of this page on GitHub.](https://github.com/langchain-ai/docs/edit/main/src/oss\langgraph\overview.mdx)
+</Callout>
+<Tip icon="terminal" iconType="regular">
+    [Connect these docs programmatically](/use-these-docs) to Claude, VSCode, and more via MCP for real-time answers.
+</Tip>
